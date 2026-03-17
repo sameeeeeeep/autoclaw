@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>autoclaw — toast cards</title>
+<style>
+:root {
+  --f: -apple-system,"SF Pro Text","SF Pro Display",system-ui,sans-serif;
+  --gb: rgba(10,10,18,0.94);
+  --gs: rgba(255,255,255,0.07);
+  --gsu: rgba(255,255,255,0.11);
+  --gbr: rgba(255,255,255,0.11);
+  --gbri: rgba(255,255,255,0.28);
+  --gt: rgba(255,255,255,0.92);
+  --gt2: rgba(255,255,255,0.52);
+  --gt3: rgba(255,255,255,0.28);
+  --ga: rgba(255,255,255,0.14);
+  --green: #34d399; --amber: #fbbf24; --blue: #60a5fa;
+  --red: #f87171; --purple: #a78bfa; --teal: #2dd4bf;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #08080f; font-family: var(--f); padding: 32px 24px 60px; }
+
+/* ── NAV ── */
+.nav { display: flex; gap: 2px; flex-wrap: wrap; margin-bottom: 36px; align-items: center; }
+.nav h1 { font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.9); margin-right: 14px; letter-spacing: -.01em; }
+.nb { padding: 5px 11px; font-size: 11px; border: 0.5px solid rgba(255,255,255,0.14); border-radius: 13px; cursor: pointer; background: transparent; color: rgba(255,255,255,0.35); transition: all .13s; font-family: var(--f); }
+.nb.on { background: rgba(255,255,255,0.13); color: rgba(255,255,255,0.9); border-color: rgba(255,255,255,0.28); }
+
+/* ── SECTIONS ── */
+.sec { display: none; } .sec.on { display: block; }
+.sec-lbl { font-size: 10px; font-weight: 700; color: rgba(255,255,255,0.2); text-transform: uppercase; letter-spacing: .09em; margin-bottom: 20px; }
+.grid { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.col { display: flex; flex-direction: column; gap: 6px; }
+.item-lbl { font-size: 10px; color: rgba(255,255,255,0.28); margin-bottom: 4px; font-family: var(--f); }
+
+/* ── GLASS BASE ── */
+.gc {
+  background: var(--gb);
+  border: 0.5px solid var(--gbr);
+  border-radius: 18px;
+  backdrop-filter: blur(60px) saturate(2.4);
+  -webkit-backdrop-filter: blur(60px) saturate(2.4);
+  box-shadow: 0 18px 52px rgba(0,0,0,.72), inset 0 1px 0 rgba(255,255,255,0.10);
+  position: relative;
+  overflow: hidden;
+}
+.gc::before {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: 18px;
+  border: 0.5px solid rgba(255,255,255,0.055);
+  pointer-events: none; z-index: 100;
+}
+
+/* ── TOAST SHELL ── */
+.toast { width: 318px; }
+
+/* header */
+.t-hdr {
+  display: flex; align-items: center; gap: 7px;
+  padding: 10px 13px;
+  border-bottom: 0.5px solid var(--gbr);
+}
+.badge {
+  font-size: 10px; font-weight: 600;
+  padding: 2px 7px; border-radius: 7px;
+  flex-shrink: 0;
+}
+.b-proj  { background: rgba(96,165,250,.18); color: var(--blue); }
+.b-new   { background: rgba(251,191,36,.18); color: var(--amber); }
+.b-ok    { background: rgba(52,211,153,.18); color: var(--green); }
+.b-warn  { background: rgba(248,113,113,.18); color: var(--red); }
+.b-learn { background: rgba(251,191,36,.18); color: var(--amber); }
+.t-type  { font-size: 11px; font-weight: 600; color: var(--gt); }
+.t-src   { font-size: 10px; color: var(--gt3); margin-left: auto; white-space: nowrap; }
+
+/* body */
+.t-body { padding: 11px 13px; border-bottom: 0.5px solid var(--gbr); }
+.t-detect { font-size: 12px; color: var(--gt2); margin-bottom: 9px; line-height: 1.5; }
+.t-warn { display: flex; gap: 7px; padding: 8px 10px; background: rgba(248,113,113,.08); border: 0.5px solid rgba(248,113,113,.2); border-radius: 10px; margin-bottom: 9px; }
+.t-warn-dot { width: 15px; height: 15px; border-radius: 50%; background: rgba(248,113,113,.25); color: var(--red); font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
+.t-warn-txt { font-size: 11px; color: rgba(248,113,113,.8); line-height: 1.5; }
+.t-out { background: var(--gs); border: 0.5px solid var(--gbr); border-radius: 11px; padding: 9px 11px; }
+.t-out.danger { background: rgba(248,113,113,.07); border-color: rgba(248,113,113,.22); }
+.t-row { display: flex; gap: 7px; margin-bottom: 3px; font-size: 11px; align-items: flex-start; }
+.t-row:last-child { margin-bottom: 0; }
+.t-lbl { color: var(--gt3); min-width: 46px; flex-shrink: 0; font-size: 10.5px; padding-top: 0.5px; }
+.t-val { color: var(--gt); line-height: 1.4; }
+.t-val.mu { color: var(--gt2); font-style: italic; }
+.t-val.bad { color: var(--red); font-weight: 600; }
+.t-val.good { color: var(--green); }
+.attach {
+  display: flex; align-items: center; gap: 7px;
+  margin-top: 8px; padding: 6px 8px;
+  background: rgba(255,255,255,0.04);
+  border: 0.5px solid var(--gbr); border-radius: 8px;
+  font-size: 11px; color: var(--gt2);
+}
+.attach-ic { width: 18px; height: 20px; background: rgba(248,113,113,.28); border-radius: 3px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.attach-ic svg { width: 10px; height: 10px; color: var(--red); }
+
+/* steps */
+.step-list { list-style: none; }
+.step { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 0.5px solid var(--gbr); font-size: 11px; }
+.step:last-child { border-bottom: none; }
+.sn { width: 18px; height: 18px; border-radius: 50%; background: var(--gsu); color: var(--gt3); font-size: 9px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.sn.done   { background: rgba(52,211,153,.18); color: var(--green); }
+.sn.active { background: rgba(96,165,250,.18); color: var(--blue); }
+.st { flex: 1; color: var(--gt); }
+.st.done { color: var(--gt3); }
+.stool { font-size: 9px; padding: 1px 6px; border-radius: 5px; background: var(--gs); color: var(--gt3); flex-shrink: 0; }
+.stime { font-size: 9px; color: var(--gt3); flex-shrink: 0; }
+.prog-bar { height: 2px; background: var(--gs); border-radius: 2px; overflow: hidden; margin: 8px 0 5px; }
+.prog-fill { height: 100%; border-radius: 2px; background: var(--blue); }
+
+/* text preview block */
+.draft-text {
+  font-size: 12px; color: var(--gt2); line-height: 1.65;
+  background: var(--gs); border: 0.5px solid var(--gbr);
+  border-radius: 11px; padding: 9px 11px;
+}
+
+/* tool call block */
+.tc { border: 0.5px solid var(--gbr); border-radius: 10px; overflow: hidden; margin-bottom: 7px; }
+.tc:last-child { margin-bottom: 0; }
+.tc.warn { border-color: rgba(248,113,113,.38); }
+.tc-hdr { display: flex; align-items: center; gap: 7px; padding: 7px 10px; background: var(--gs); border-bottom: 0.5px solid var(--gbr); }
+.tc-hdr.warn { background: rgba(248,113,113,.09); }
+.tc-n { width: 16px; height: 16px; border-radius: 50%; background: var(--gsu); color: var(--gt3); font-size: 9px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+.tc-tool { font-size: 11px; font-weight: 600; color: var(--gt); }
+.tc-act { font-size: 10px; color: var(--gt3); margin-left: auto; }
+.tc-act.warn { color: var(--red); }
+.tc-body { padding: 8px 10px; font-size: 11px; font-family: monospace; color: var(--gt2); line-height: 1.7; background: rgba(0,0,0,.22); }
+.tc-v { color: var(--gt); }
+.tc-v.bad { color: var(--red); font-weight: 600; }
+
+/* event rows (learn mode) */
+.ev-row { display: flex; align-items: flex-start; gap: 7px; padding: 5px 0; border-bottom: 0.5px solid var(--gbr); font-size: 11px; }
+.ev-row:last-child { border-bottom: none; }
+.ev-time { font-size: 9px; color: var(--gt3); min-width: 32px; padding-top: 1px; flex-shrink: 0; }
+.ev-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gbr); margin-top: 4px; flex-shrink: 0; }
+.ev-desc { color: var(--gt); flex: 1; line-height: 1.4; }
+.ev-app { font-size: 9px; padding: 1px 5px; border-radius: 5px; background: var(--gs); color: var(--gt3); flex-shrink: 0; }
+
+/* result thumbnails */
+.thumb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.thumb { aspect-ratio: 3/4; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; }
+
+/* footer */
+.t-ftr { display: flex; gap: 7px; padding: 9px 13px; align-items: center; }
+.btn-p { font-size: 11px; padding: 5px 13px; border-radius: 8px; background: rgba(255,255,255,0.88); color: #09090f; border: none; cursor: pointer; font-weight: 600; font-family: var(--f); white-space: nowrap; flex-shrink: 0; }
+.btn-s { font-size: 11px; padding: 5px 10px; border-radius: 8px; background: transparent; color: var(--gt2); border: 0.5px solid var(--gbr); cursor: pointer; font-family: var(--f); white-space: nowrap; flex-shrink: 0; }
+.btn-d { font-size: 11px; padding: 5px 10px; border-radius: 8px; background: rgba(248,113,113,.18); color: var(--red); border: 0.5px solid rgba(248,113,113,.3); cursor: pointer; font-family: var(--f); white-space: nowrap; flex-shrink: 0; }
+.btn-x { font-size: 11px; padding: 5px 8px; border-radius: 8px; background: transparent; color: var(--gt3); border: 0.5px solid var(--gbr); cursor: pointer; font-family: var(--f); margin-left: auto; flex-shrink: 0; }
+.t-time { font-size: 10px; color: var(--gt3); margin-left: auto; }
+
+/* learn recording bar */
+.learn-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  background: rgba(251,191,36,.1); border: 0.5px solid rgba(251,191,36,.25);
+  border-radius: 11px; margin-bottom: 8px;
+}
+.l-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+.l-txt { font-size: 12px; font-weight: 600; color: var(--amber); }
+.l-time { font-size: 11px; color: rgba(251,191,36,.45); margin-left: auto; }
+.l-btn { font-size: 10px; padding: 3px 9px; border-radius: 7px; background: transparent; border: 0.5px solid rgba(251,191,36,.3); color: var(--amber); cursor: pointer; font-family: var(--f); }
+
+/* wf name input */
+.wf-input { width: 100%; background: var(--gs); border: 0.5px solid var(--gbr); border-radius: 8px; padding: 6px 10px; font-size: 12px; color: var(--gt); outline: none; font-family: var(--f); margin-top: 9px; }
+
+/* dividers */
+.hdiv { height: 0.5px; background: var(--gbr); margin: 28px 0; }
+
+/* scene bg */
+.scene { background: linear-gradient(145deg,#07070e 0%,#0c1020 45%,#130b2c 75%,#081626 100%); border-radius: 14px; padding: 24px; position: relative; overflow: hidden; }
+.blob { position: absolute; border-radius: 50%; filter: blur(75px); opacity: .26; pointer-events: none; }
+.b1 { width: 240px; height: 240px; background: #5b21b6; top: -90px; left: -50px; }
+.b2 { width: 180px; height: 180px; background: #0c4a6e; bottom: -40px; left: 22%; }
+.b3 { width: 120px; height: 120px; background: #831843; top: 28%; right: -20px; }
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <h1>autoclaw toasts</h1>
+  <button class="nb on"  onclick="sw('g0',this)">Gate 0</button>
+  <button class="nb"     onclick="sw('g1r',this)">Gate 1 · ready</button>
+  <button class="nb"     onclick="sw('g1w',this)">Gate 1 · workflow</button>
+  <button class="nb"     onclick="sw('g2',this)">Gate 2 · approval</button>
+  <button class="nb"     onclick="sw('lm',this)">Learn mode</button>
+  <button class="nb"     onclick="sw('sys',this)">System</button>
+</div>
+
+<!-- ════════════════════════════════════════════ GATE 0 ══ -->
+<div class="sec on" id="g0">
+<div class="scene">
+<div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+<div class="sec-lbl">Gate 0 — task approval · before any drafting</div>
+<div class="grid">
+
+  <div class="col">
+    <div class="item-lbl">standard · low trust signal</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-proj">nailinit</span>
+        <span class="t-type">task detected</span>
+        <span class="t-src">WhatsApp · now</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Noticed a task: send nailinit deck to Priya on her email.</div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Draft this</button>
+        <button class="btn-s">Not this</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">suspicious · injection warning</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-warn">review</span>
+        <span class="t-type">task detected</span>
+        <span class="t-src">WhatsApp · now</span>
+      </div>
+      <div class="t-body">
+        <div class="t-warn">
+          <div class="t-warn-dot">!</div>
+          <div class="t-warn-txt">This message may contain embedded instructions. Review the detected task carefully before drafting.</div>
+        </div>
+        <div class="t-detect">Noticed a task: send nailinit deck to Priya on her email.</div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Draft this</button>
+        <button class="btn-s">Not this</button>
+        <button class="btn-s" style="margin-left:auto">View source</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">workflow · new project</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-new">new project</span>
+        <span class="t-type">task detected</span>
+        <span class="t-src">WhatsApp · now</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Noticed a task: create a wedding invite card design from the reference video — June 12, Ranjit + Simran, Oberoi Delhi.</div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Plan this</button>
+        <button class="btn-s">Not now</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">iMessage reply</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-proj">nailinit</span>
+        <span class="t-type">task detected</span>
+        <span class="t-src">iMessage · now</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Noticed a task: reply to Rohan confirming Thursday 3pm call.</div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Draft reply</button>
+        <button class="btn-s">Not this</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">cold start · low confidence</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-new">new</span>
+        <span class="t-type">possible task</span>
+        <span class="t-src">Figma · screen</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Noticed something that might be a task: working on a design file with multiple frames — export variants?</div>
+        <div style="font-size:10px;color:var(--gt3);margin-top:6px">Low confidence · first session on this project</div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Yes, draft this</button>
+        <button class="btn-s">No</button>
+        <button class="btn-s" style="margin-left:auto">Tell me more</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">scheduled workflow reminder</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-proj">nailinit</span>
+        <span class="t-type">scheduled task</span>
+        <span class="t-src">Monday 09:00</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Noticed a task: weekly investor update — send deck to 8 contacts.</div>
+        <div class="t-out" style="margin-top:8px">
+          <div class="t-row"><span class="t-lbl">Workflow</span><span class="t-val">weekly investor update</span></div>
+          <div class="t-row"><span class="t-lbl">Est.</span><span class="t-val">~3 min · 3 steps</span></div>
+        </div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Run this</button>
+        <button class="btn-s">Skip week</button>
+        <button class="btn-x">✕</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════ GATE 1 READY ══ -->
+<div class="sec" id="g1r">
+<div class="scene">
+<div class="blob b1"></div><div class="blob b3"></div>
+<div class="sec-lbl">Gate 1 · ready output — draft approval</div>
+<div class="grid">
+
+  <div class="col">
+    <div class="item-lbl">email with attachment</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-proj">nailinit</span>
+        <span class="t-type">email drafted</span>
+        <span class="t-src">WhatsApp · now</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Email ready to send to Priya</div>
+        <div class="t-out">
+          <div class="t-row"><span class="t-lbl">To</span><span class="t-val">priya@acme.com</span></div>
+          <div class="t-row"><span class="t-lbl">Subject</span><span class="t-val">Nailinit deck</span></div>
+          <div class="t-row"><span class="t-lbl">Body</span><span class="t-val mu">Hi Priya, please find the deck attached as requested...</span></div>
+          <div class="attach">
+            <div class="attach-ic"><svg viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 1h5l2 2v8H2z"/><path d="M6 1v3h3"/></svg></div>
+            <span>nailinit_v3.pdf · 2.4 MB</span>
+          </div>
+        </div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Send</button>
+        <button class="btn-s">Edit</button>
+        <button class="btn-x">✕</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">draft polish · Mail</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-proj">investor update</span>
+        <span class="t-type">draft polished</span>
+        <span class="t-src">Mail · composing</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Polished version of your draft to Rohan</div>
+        <div class="draft-text">Hi Rohan, following up on our conversation — we've hit 40% MoM and wanted to share the updated deck before Thursday. Happy to jump on a call if useful.</div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Replace draft</button>
+        <button class="btn-s">Compare</button>
+        <button class="btn-x">✕</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">file conversion · PNG → JPG</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-ok">converted</span>
+        <span class="t-type">file ready</span>
+        <span class="t-src">Chrome · form error</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Upload form requires JPG — converted</div>
+        <div class="t-out">
+          <div class="t-row"><span class="t-lbl">Output</span><span class="t-val">screenshot.jpg · 340 KB</span></div>
+          <div class="t-row"><span class="t-lbl">Was</span><span class="t-val mu">screenshot.png · 1.2 MB</span></div>
+        </div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Use this file</button>
+        <button class="btn-x">✕</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">meeting brief</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-proj">nailinit</span>
+        <span class="t-type">brief ready</span>
+        <span class="t-src">Calendar · 20 min</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Product review with Priya and Rohan starting soon</div>
+        <div class="t-out">
+          <div style="font-size:11px;font-weight:600;color:var(--gt);margin-bottom:5px">Product review · 3 attendees</div>
+          <div style="font-size:11px;color:var(--gt2);line-height:1.6">2 open questions from your last PRD comments · Last decision: ship v2 before April · Priya — VP Eng, met 4×</div>
+        </div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Open brief</button>
+        <button class="btn-x">✕</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">iMessage reply drafted</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-proj">nailinit</span>
+        <span class="t-type">reply drafted</span>
+        <span class="t-src">iMessage · now</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Reply to Rohan — Thursday 3pm call</div>
+        <div class="draft-text">Thursday 3pm works — I'll send a calendar invite now. Talk then.</div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Send reply</button>
+        <button class="btn-s">Edit</button>
+        <button class="btn-x">✕</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">GitHub PR summary</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-proj">autoclaw dev</span>
+        <span class="t-type">PR summary</span>
+        <span class="t-src">GitHub · notification</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">PR #47 assigned to you — intelligence layer refactor</div>
+        <div class="t-out">
+          <div class="t-row"><span class="t-lbl">Files</span><span class="t-val">14 changed · +380 −120</span></div>
+          <div class="t-row"><span class="t-lbl">CI</span><span class="t-val good">passing</span></div>
+          <div class="t-row"><span class="t-lbl">Note</span><span class="t-val mu">touches llama.cpp bridge</span></div>
+        </div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Open PR</button>
+        <button class="btn-s">Summarise diff</button>
+        <button class="btn-x">✕</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════ GATE 1 WORKFLOW ══ -->
+<div class="sec" id="g1w">
+<div class="scene">
+<div class="blob b1"></div><div class="blob b2"></div>
+<div class="sec-lbl">Gate 1 · workflow proposal — plan approval</div>
+<div class="grid">
+
+  <div class="col">
+    <div class="item-lbl">new project · wedding card · Route C</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-new">new project</span>
+        <span class="t-type">workflow planned</span>
+        <span class="t-src">~4 min</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Wedding invite design from reference video — June 12, Ranjit + Simran</div>
+        <ul class="step-list">
+          <li class="step"><div class="sn">1</div><span class="st">Extract style from reference</span><span class="stool">video2ai</span><span class="stime">~40s</span></li>
+          <li class="step"><div class="sn">2</div><span class="st">Fetch background image</span><span class="stool">unsplash</span><span class="stime">~5s</span></li>
+          <li class="step"><div class="sn">3</div><span class="st">Match font family</span><span class="stool">google_fonts</span><span class="stime">~5s</span></li>
+          <li class="step"><div class="sn">4</div><span class="st">Generate invite copy</span><span class="stool">Claude</span><span class="stime">~15s</span></li>
+          <li class="step"><div class="sn">5</div><span class="st">Compose + export options</span><span class="stool">remotion</span><span class="stime">~2m</span></li>
+        </ul>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Run workflow</button>
+        <button class="btn-s">Edit plan</button>
+        <div class="t-time">~4 min total</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">learned workflow · job boards · Route B</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-proj">nailinit</span>
+        <span class="t-type">workflow ready</span>
+        <span class="t-src">situation · learned</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">New job req in Notion — Senior iOS Engineer</div>
+        <ul class="step-list">
+          <li class="step"><div class="sn">1</div><span class="st">Read JD from Notion</span><span class="stool">notion_read</span><span class="stime">~5s</span></li>
+          <li class="step"><div class="sn">2</div><span class="st">Format per board spec</span><span class="stool">Claude</span><span class="stime">~10s</span></li>
+          <li class="step"><div class="sn">3</div><span class="st">Post to 5 boards</span><span class="stool">job_boards</span><span class="stime">~30s</span></li>
+        </ul>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Run workflow</button>
+        <button class="btn-s">Edit plan</button>
+        <div class="t-time">~45s</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">running · step 3 of 5</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-new">wedding card</span>
+        <span class="t-type">running</span>
+        <span class="t-src">step 3 of 5</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Wedding invite design from reference video</div>
+        <div class="prog-bar"><div class="prog-fill" style="width:50%"></div></div>
+        <ul class="step-list">
+          <li class="step"><div class="sn done">✓</div><span class="st done">Extract style from reference</span><span class="stool">video2ai</span></li>
+          <li class="step"><div class="sn done">✓</div><span class="st done">Fetch background image</span><span class="stool">unsplash</span></li>
+          <li class="step"><div class="sn active">→</div><span class="st">Match font family</span><span class="stool">google_fonts</span></li>
+          <li class="step"><div class="sn">4</div><span class="st" style="color:var(--gt3)">Generate invite copy</span><span class="stool">Claude</span></li>
+          <li class="step"><div class="sn">5</div><span class="st" style="color:var(--gt3)">Compose + export</span><span class="stool">remotion</span></li>
+        </ul>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-s">Cancel</button>
+        <div class="t-time" style="color:var(--blue)">~2 min left</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">complete · results ready</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-ok">complete</span>
+        <span class="t-type">4 options ready</span>
+        <span class="t-src">4 min 12s</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Wedding invite designs generated</div>
+        <div class="thumb-grid">
+          <div class="thumb" style="background:rgba(167,139,250,.14);border:0.5px solid rgba(167,139,250,.22);color:rgba(167,139,250,.7)">Option A</div>
+          <div class="thumb" style="background:rgba(96,165,250,.14);border:0.5px solid rgba(96,165,250,.22);color:rgba(96,165,250,.7)">Option B</div>
+          <div class="thumb" style="background:rgba(52,211,153,.14);border:0.5px solid rgba(52,211,153,.22);color:rgba(52,211,153,.7)">Option C</div>
+          <div class="thumb" style="background:rgba(251,191,36,.14);border:0.5px solid rgba(251,191,36,.22);color:rgba(251,191,36,.7)">Option D</div>
+        </div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Export selected</button>
+        <button class="btn-s">View all</button>
+        <button class="btn-x">✕</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">failed · error state</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-warn">failed</span>
+        <span class="t-type">step 3 of 5</span>
+        <span class="t-src">wedding card</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Remotion export failed — dependency missing</div>
+        <div class="t-out danger">
+          <div style="font-size:11px;color:var(--red);font-weight:600;margin-bottom:3px">remotion · module not found</div>
+          <div style="font-size:11px;color:rgba(248,113,113,.65)">Cannot find @remotion/renderer. Run: npm install @remotion/renderer</div>
+        </div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Retry</button>
+        <button class="btn-s">Fix + retry</button>
+        <button class="btn-x">✕</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════ GATE 2 ══ -->
+<div class="sec" id="g2">
+<div class="scene">
+<div class="blob b1"></div><div class="blob b3"></div>
+<div class="sec-lbl">Gate 2 — execution approval · exact tool calls · mandatory</div>
+<div class="grid">
+
+  <div class="col">
+    <div class="item-lbl">clean · email send</div>
+    <div class="gc toast" style="width:336px">
+      <div class="t-hdr">
+        <div style="width:22px;height:22px;border-radius:7px;background:rgba(52,211,153,.18);border:0.5px solid rgba(52,211,153,.3);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="11" height="13" viewBox="0 0 11 13" fill="none"><path d="M5.5 1L10 3.5V7C10 9.5 7.8 11.8 5.5 12.5C3.2 11.8 1 9.5 1 7V3.5L5.5 1Z" stroke="var(--green)" stroke-width="1.2" fill="none"/></svg>
+        </div>
+        <div>
+          <div class="t-type">Review before executing</div>
+          <div style="font-size:10px;color:var(--gt3);margin-top:1px">2 actions · nailinit · mail</div>
+        </div>
+      </div>
+      <div class="t-body">
+        <div class="tc">
+          <div class="tc-hdr"><div class="tc-n">1</div><span class="tc-tool">mail_compose</span><span class="tc-act">create draft</span></div>
+          <div class="tc-body">to: <span class="tc-v">priya@acme.com</span><br>subject: <span class="tc-v">Nailinit deck</span><br>attach: <span class="tc-v">~/Projects/nailinit/nailinit_v3.pdf</span></div>
+        </div>
+        <div class="tc">
+          <div class="tc-hdr"><div class="tc-n">2</div><span class="tc-tool">mail_send</span><span class="tc-act">send</span></div>
+          <div class="tc-body">draft_id: <span class="tc-v">[above]</span><br>confirm: <span class="tc-v">true</span></div>
+        </div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Approve + send</button>
+        <button class="btn-d">Deny</button>
+        <button class="btn-s">Edit</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">injection · extra CC recipient flagged</div>
+    <div class="gc toast" style="width:336px">
+      <div class="t-hdr" style="background:rgba(248,113,113,.07)">
+        <div style="width:22px;height:22px;border-radius:7px;background:rgba(248,113,113,.2);border:0.5px solid rgba(248,113,113,.35);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="11" height="13" viewBox="0 0 11 13" fill="none"><path d="M5.5 1L10 3.5V7C10 9.5 7.8 11.8 5.5 12.5C3.2 11.8 1 9.5 1 7V3.5L5.5 1Z" stroke="var(--red)" stroke-width="1.2" fill="none"/></svg>
+        </div>
+        <div>
+          <div class="t-type" style="color:var(--red)">Suspicious parameter detected</div>
+          <div style="font-size:10px;color:rgba(248,113,113,.5);margin-top:1px">differs from original intent</div>
+        </div>
+      </div>
+      <div class="t-body">
+        <div class="tc warn">
+          <div class="tc-hdr warn"><div class="tc-n">1</div><span class="tc-tool">mail_compose</span><span class="tc-act warn">review</span></div>
+          <div class="tc-body">to: <span class="tc-v">priya@acme.com</span><br>cc: <span class="tc-v bad">attacker@evil.com — not in original request</span><br>subject: <span class="tc-v">Nailinit deck</span><br>attach: <span class="tc-v">nailinit_v3.pdf</span></div>
+        </div>
+        <div style="display:flex;gap:7px;padding:9px 10px;background:rgba(248,113,113,.07);border:0.5px solid rgba(248,113,113,.2);border-radius:10px;margin-top:0">
+          <div style="width:15px;height:15px;border-radius:50%;background:rgba(248,113,113,.25);color:var(--red);font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">!</div>
+          <div style="font-size:11px;color:rgba(248,113,113,.8);line-height:1.5">A CC recipient not in the original WhatsApp message was injected. Likely prompt injection.</div>
+        </div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-d">Block</button>
+        <button class="btn-s">Edit params</button>
+        <button class="btn-s" style="margin-left:auto">Trace source</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">file system access</div>
+    <div class="gc toast" style="width:336px">
+      <div class="t-hdr">
+        <div style="width:22px;height:22px;border-radius:7px;background:rgba(52,211,153,.18);border:0.5px solid rgba(52,211,153,.3);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="11" height="13" viewBox="0 0 11 13" fill="none"><path d="M5.5 1L10 3.5V7C10 9.5 7.8 11.8 5.5 12.5C3.2 11.8 1 9.5 1 7V3.5L5.5 1Z" stroke="var(--green)" stroke-width="1.2" fill="none"/></svg>
+        </div>
+        <div>
+          <div class="t-type">Review before executing</div>
+          <div style="font-size:10px;color:var(--gt3);margin-top:1px">1 action · wedding card · video2ai</div>
+        </div>
+      </div>
+      <div class="t-body">
+        <div class="tc">
+          <div class="tc-hdr"><div class="tc-n">1</div><span class="tc-tool">video2ai</span><span class="tc-act">process video</span></div>
+          <div class="tc-body">input: <span class="tc-v">~/Downloads/wedding_ref.mp4</span><br>output: <span class="tc-v">~/autoclaw/tmp/wedding_card/</span><br>mode: <span class="tc-v">frames + transcript + themes</span></div>
+        </div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Approve</button>
+        <button class="btn-d">Deny</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">multi-step workflow execution</div>
+    <div class="gc toast" style="width:336px">
+      <div class="t-hdr">
+        <div style="width:22px;height:22px;border-radius:7px;background:rgba(52,211,153,.18);border:0.5px solid rgba(52,211,153,.3);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="11" height="13" viewBox="0 0 11 13" fill="none"><path d="M5.5 1L10 3.5V7C10 9.5 7.8 11.8 5.5 12.5C3.2 11.8 1 9.5 1 7V3.5L5.5 1Z" stroke="var(--green)" stroke-width="1.2" fill="none"/></svg>
+        </div>
+        <div>
+          <div class="t-type">Review before executing</div>
+          <div style="font-size:10px;color:var(--gt3);margin-top:1px">3 actions · nailinit · job boards</div>
+        </div>
+      </div>
+      <div class="t-body">
+        <div class="tc">
+          <div class="tc-hdr"><div class="tc-n">1</div><span class="tc-tool">notion_read</span><span class="tc-act">read page</span></div>
+          <div class="tc-body">page_id: <span class="tc-v">Senior iOS Engineer JD</span><br>workspace: <span class="tc-v">nailinit</span></div>
+        </div>
+        <div class="tc">
+          <div class="tc-hdr"><div class="tc-n">2</div><span class="tc-tool">Claude</span><span class="tc-act">format content</span></div>
+          <div class="tc-body">task: <span class="tc-v">format JD for 5 job boards</span></div>
+        </div>
+        <div class="tc">
+          <div class="tc-hdr"><div class="tc-n">3</div><span class="tc-tool">job_boards</span><span class="tc-act">post × 5</span></div>
+          <div class="tc-body">boards: <span class="tc-v">LinkedIn, Indeed, AngelList, Wellfound, Otta</span></div>
+        </div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Approve all</button>
+        <button class="btn-d">Deny</button>
+        <button class="btn-s">Edit</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════ LEARN MODE ══ -->
+<div class="sec" id="lm">
+<div class="scene">
+<div class="blob b1"></div><div class="blob b2"></div>
+<div class="sec-lbl">Learn mode — recording + save workflow</div>
+<div class="grid">
+
+  <div class="col">
+    <div class="item-lbl">recording in progress</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="learn-bar">
+        <div class="l-dot"></div>
+        <span class="l-txt">recording workflow</span>
+        <span class="l-time">2:14</span>
+        <button class="l-btn">stop</button>
+      </div>
+      <div class="gc toast">
+        <div class="t-hdr" style="background:rgba(251,191,36,.07)">
+          <span class="badge b-learn">nailinit</span>
+          <span class="t-type">post job to boards</span>
+          <span class="t-src">learning</span>
+        </div>
+        <div class="t-body">
+          <div class="t-detect" style="margin-bottom:8px">Steps recorded so far</div>
+          <div class="ev-row"><span class="ev-time">0:04</span><div class="ev-dot"></div><span class="ev-desc">Opened job req in Notion</span><span class="ev-app">Notion</span></div>
+          <div class="ev-row"><span class="ev-time">0:31</span><div class="ev-dot"></div><span class="ev-desc">Copied JD text to clipboard</span><span class="ev-app">clipboard</span></div>
+          <div class="ev-row"><span class="ev-time">0:58</span><div class="ev-dot"></div><span class="ev-desc">Pasted into LinkedIn post form</span><span class="ev-app">Chrome</span></div>
+          <div class="ev-row"><span class="ev-time">1:44</span><div class="ev-dot"></div><span class="ev-desc">Submitted on LinkedIn</span><span class="ev-app">Chrome</span></div>
+          <div class="ev-row" style="opacity:.4"><span class="ev-time">now</span><div class="ev-dot" style="background:var(--amber)"></div><span class="ev-desc" style="color:var(--gt3)">watching...</span></div>
+        </div>
+        <div class="t-ftr">
+          <button class="btn-s">stop + save</button>
+          <button class="btn-d" style="margin-left:auto">discard</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">review extracted steps · save workflow</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-ok">4 steps extracted</span>
+        <span class="t-type">save workflow?</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Name and save to run again in one tap</div>
+        <ul class="step-list" style="margin-bottom:0">
+          <li class="step"><div class="sn">1</div><span class="st">Read job req from Notion</span><span class="stool">notion_read</span></li>
+          <li class="step"><div class="sn">2</div><span class="st">Format per board spec</span><span class="stool">Claude</span></li>
+          <li class="step"><div class="sn">3</div><span class="st">Post to LinkedIn</span><span class="stool">linkedin_post</span></li>
+          <li class="step"><div class="sn">4</div><span class="st">Post to 4 more boards</span><span class="stool">job_boards</span></li>
+        </ul>
+        <input class="wf-input" value="Post job to all boards">
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Save workflow</button>
+        <button class="btn-s">Edit steps</button>
+        <button class="btn-x">✕</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════ SYSTEM ══ -->
+<div class="sec" id="sys">
+<div class="scene">
+<div class="blob b1"></div><div class="blob b3"></div>
+<div class="sec-lbl">System cards — project, session, dismissed</div>
+<div class="grid">
+
+  <div class="col">
+    <div class="item-lbl">new project auto-detected</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-new">new project</span>
+        <span class="t-type">project detected</span>
+        <span class="t-src">18 min activity</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">You have been working on wedding card design for 18 min</div>
+        <div class="t-out">
+          <div class="t-row"><span class="t-lbl">Name</span><span class="t-val">wedding card</span></div>
+          <div class="t-row"><span class="t-lbl">Files</span><span class="t-val">2 detected</span></div>
+          <div class="t-row"><span class="t-lbl">Contacts</span><span class="t-val">1 · Ranjit</span></div>
+        </div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Create project</button>
+        <button class="btn-s">Rename</button>
+        <button class="btn-x">✕</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">session start prompt</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-ok">session</span>
+        <span class="t-type">start session?</span>
+        <span class="t-src">nailinit · matched</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">nailinit matched — start a session to track this work?</div>
+        <div class="t-out">
+          <div class="t-row"><span class="t-lbl">Project</span><span class="t-val">nailinit</span></div>
+          <div class="t-row"><span class="t-lbl">App</span><span class="t-val">Figma · nailinit_v3</span></div>
+        </div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Start session</button>
+        <button class="btn-s">Not now</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">dismissed · visible in session log</div>
+    <div class="gc toast" style="opacity:0.55">
+      <div class="t-hdr">
+        <span class="badge" style="background:rgba(255,255,255,0.07);color:rgba(255,255,255,0.25)">nailinit</span>
+        <span class="t-type" style="color:var(--gt3)">dismissed · 10:43</span>
+      </div>
+      <div class="t-body">
+        <div style="font-size:11px;color:rgba(255,255,255,0.25)">Send nailinit deck to Priya — dismissed without action. Visible in Sessions → nailinit thread.</div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-s" style="opacity:.5">Restore</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="item-lbl">context changed · scheduled re-surfaced</div>
+    <div class="gc toast">
+      <div class="t-hdr">
+        <span class="badge b-warn">context changed</span>
+        <span class="t-type">review before running</span>
+        <span class="t-src">scheduled · Mon 09:00</span>
+      </div>
+      <div class="t-body">
+        <div class="t-detect">Weekly investor update scheduled — but context has changed since last run</div>
+        <div class="t-out danger">
+          <div class="t-row"><span class="t-lbl">Changed</span><span class="t-val bad">2 contacts removed from project</span></div>
+          <div class="t-row"><span class="t-lbl">Was</span><span class="t-val mu">8 recipients</span></div>
+          <div class="t-row"><span class="t-lbl">Now</span><span class="t-val">6 recipients</span></div>
+        </div>
+      </div>
+      <div class="t-ftr">
+        <button class="btn-p">Run with 6</button>
+        <button class="btn-s">Edit</button>
+        <button class="btn-s">Skip</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+</div>
+
+<script>
+function sw(id, btn) {
+  document.querySelectorAll('.sec').forEach(s => s.classList.remove('on'));
+  document.querySelectorAll('.nb').forEach(b => b.classList.remove('on'));
+  document.getElementById(id).classList.add('on');
+  btn.classList.add('on');
+}
+</script>
+</body>
+</html>
