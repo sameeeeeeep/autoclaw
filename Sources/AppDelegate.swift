@@ -7,10 +7,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var pillWindow: PillWindow!
     private var mainPanelWindow: MainPanelWindow!
-    private var toastWindow: ToastWindow!
+    private var threadWindow: ToastWindow!
     private var projectPickerWindow: ToastWindow!
-    private var clarificationWindow: ToastWindow!
-    private var errorWindow: ToastWindow!
     private var hotkeyMonitor: GlobalHotkeyMonitor!
     private var cancellables = Set<AnyCancellable>()
 
@@ -81,11 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupToastWindows() {
-        toastWindow = ToastWindow()
+        threadWindow = ToastWindow()
+        threadWindow.allowsKeyboard = true  // needs text input
         projectPickerWindow = ToastWindow()
-        clarificationWindow = ToastWindow()
-        clarificationWindow.allowsKeyboard = true  // needs text input
-        errorWindow = ToastWindow()
     }
 
     private func setupHotkey() {
@@ -116,115 +112,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        // Show task suggestion toast
-        appState.$currentSuggestion
+        // Show/dismiss thread toast
+        appState.$showThread
+            .removeDuplicates()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] suggestion in
+            .sink { [weak self] show in
                 guard let self else { return }
-                print("[Autoclaw] Observer: currentSuggestion changed — \(suggestion != nil ? "showing" : "nil")")
-                if suggestion != nil {
-                    self.showTaskToast()
+                if show {
+                    self.showThreadToast()
                 } else {
-                    self.toastWindow.dismiss()
+                    self.threadWindow.dismiss()
                 }
             }
             .store(in: &cancellables)
 
-        // Show clarification toast
-        appState.$pendingClarification
+        // Re-render thread toast when messages change
+        appState.$threadMessages
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] clarification in
+            .sink { [weak self] messages in
                 guard let self else { return }
-                print("[Autoclaw] Observer: pendingClarification changed — \(clarification != nil ? "showing" : "nil")")
-                if clarification != nil {
-                    self.showClarificationToast()
-                } else {
-                    self.clarificationWindow.dismiss()
+                if self.appState.showThread && !messages.isEmpty {
+                    self.showThreadToast()
                 }
             }
             .store(in: &cancellables)
 
-        // Show error toast
-        appState.$deductionError
-            .sink { [weak self] error in
+        // Also re-render when deducing state changes (for thinking indicator)
+        appState.$isDeducing
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
                 guard let self else { return }
-                if error != nil {
-                    self.showErrorToast()
-                } else {
-                    self.errorWindow.dismiss()
+                if self.appState.showThread {
+                    self.showThreadToast()
                 }
             }
             .store(in: &cancellables)
 
-        // Auto dismiss toast on execution start
+        // Auto dismiss thread on execution start, show main panel
         appState.$isExecuting
             .filter { $0 }
             .sink { [weak self] _ in
-                self?.toastWindow.dismiss()
+                self?.mainPanelWindow.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
             }
             .store(in: &cancellables)
     }
 
     // MARK: - Toast Presentation
 
-    private func showTaskToast() {
-        guard let suggestion = appState.currentSuggestion else { return }
-
-        let view = TaskToastView(
+    private func showThreadToast() {
+        let view = ThreadToastView(
             appState: appState,
-            suggestion: suggestion,
             onApprove: { [weak self] in
-                self?.toastWindow.dismiss()
+                self?.threadWindow.dismiss()
+                self?.appState.showThread = false
                 self?.appState.approveSuggestion()
-                // Show main panel for execution output
                 self?.mainPanelWindow.makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)
             },
             onDismiss: { [weak self] in
-                self?.toastWindow.dismiss()
-                self?.appState.dismissSuggestion()
+                self?.threadWindow.dismiss()
+                self?.appState.dismissThread()
             }
         )
 
-        toastWindow.show(with: view)
-    }
-
-    private func showClarificationToast() {
-        guard let clarification = appState.pendingClarification else { return }
-
-        let view = ClarificationToastView(
-            appState: appState,
-            clarification: clarification,
-            onRespond: { [weak self] answer in
-                self?.clarificationWindow.dismiss()
-                self?.appState.respondToClarification(answer)
-            },
-            onDismiss: { [weak self] in
-                self?.clarificationWindow.dismiss()
-                self?.appState.dismissClarification()
-            }
-        )
-
-        clarificationWindow.show(with: view)
-    }
-
-    private func showErrorToast() {
-        guard let error = appState.deductionError else { return }
-
-        let view = ErrorToastView(
-            message: error,
-            onRetry: { [weak self] in
-                self?.errorWindow.dismiss()
-                self?.appState.dismissError()
-                self?.appState.deduceTask()
-            },
-            onDismiss: { [weak self] in
-                self?.errorWindow.dismiss()
-                self?.appState.dismissError()
-            }
-        )
-
-        errorWindow.show(with: view)
+        threadWindow.show(with: view)
     }
 
     private func showProjectPickerToast() {

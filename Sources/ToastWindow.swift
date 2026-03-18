@@ -23,16 +23,36 @@ final class ToastWindow: NSPanel {
         isMovableByWindowBackground = true
     }
 
+    /// Maximum height for the toast (thread view can grow taller)
+    var maxHeight: CGFloat = 500
+
     func show(with view: some View) {
-        let wrapped = view.frame(width: 300)
-        let hosting = NSHostingView(rootView: wrapped)
-        contentView = hosting
+        let hosting = NSHostingView(rootView: AnyView(view))
+
+        // Use visual effect view as backdrop for system material
+        let effect = NSVisualEffectView()
+        effect.material = .hudWindow
+        effect.blendingMode = .behindWindow
+        effect.state = .active
+        effect.wantsLayer = true
+        effect.layer?.cornerRadius = 12
+
+        hosting.translatesAutoresizingMaskIntoConstraints = false
+        effect.addSubview(hosting)
+        NSLayoutConstraint.activate([
+            hosting.topAnchor.constraint(equalTo: effect.topAnchor),
+            hosting.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
+            hosting.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
+            hosting.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
+        ])
+
+        contentView = effect
 
         // Force layout to get correct size
         hosting.layoutSubtreeIfNeeded()
         let fitting = hosting.fittingSize
         let w = max(fitting.width, 300)
-        let h = max(fitting.height, 100)
+        let h = min(max(fitting.height, 100), maxHeight)
 
         // Position top-right of visible screen area
         if let screen = NSScreen.main {
@@ -44,10 +64,8 @@ final class ToastWindow: NSPanel {
 
         alphaValue = 1
         orderFront(nil)
-
-        // Ensure it's visible above everything
         level = .floating
-        print("[Autoclaw] Toast shown: \(w)x\(h)")
+        NSLog("[Autoclaw] Toast shown: \(w)x\(h)")
     }
 
     func dismiss() {

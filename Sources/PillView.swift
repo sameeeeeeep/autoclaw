@@ -28,18 +28,18 @@ enum PillMode: String, CaseIterable {
 // MARK: - Collapse Level
 
 enum CollapseLevel: Int, CaseIterable {
-    case expanded   = 0  // everything + extra canvas height
-    case full       = 1  // header + status rows + mode bar + canvas + logs + dock
-    case compact    = 2  // header + mode bar + canvas (taller) + logs
-    case headerOnly = 3  // header + audio row only
+    case expanded   = 0  // triple row + full status rows + mode bar + canvas + logs + dock
+    case full       = 1  // triple row + mode bar + canvas + dock
+    case compact    = 2  // triple row + canvas (taller) + dock
+    case headerOnly = 3  // header only
     case icon       = 4  // tiny icon dot
 
     var height: CGFloat {
         switch self {
-        case .expanded:   return 560
-        case .full:       return 480
-        case .compact:    return 380
-        case .headerOnly: return 120
+        case .expanded:   return 420
+        case .full:       return 280
+        case .compact:    return 250
+        case .headerOnly: return 40
         case .icon:       return 44
         }
     }
@@ -149,15 +149,9 @@ struct SidebarView: View {
     // MARK: - Header Only
 
     private var headerOnlyView: some View {
-        VStack(spacing: 0) {
-            header
-            statusRow(icon: "mic.fill", color: .green,
-                      title: nil, sub: micOn ? "Apple SF · LOCAL" : "Paused · tap to resume",
-                      enabled: micOn, active: micOn, waveform: true) { micOn.toggle() }
-                .padding(.horizontal, 12).padding(.bottom, 12)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { withAnimation { collapseLevel = collapseLevel.prev() } }
+        header
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation { collapseLevel = collapseLevel.prev() } }
     }
 
     // MARK: - Full / Compact / Expanded
@@ -165,25 +159,55 @@ struct SidebarView: View {
     private var fullView: some View {
         VStack(spacing: 0) {
             header
-            if collapseLevel == .compact {
-                // compact: skip full status rows, just show mode bar + larger canvas
-            } else {
-                statusSection
-            }
+            tripleStatusRow
             Rectangle().fill(Ap.sep).frame(height: 1).padding(.horizontal, 12)
-            modeBar
+            if collapseLevel == .expanded {
+                statusSection
+                Rectangle().fill(Ap.sep).frame(height: 1).padding(.horizontal, 12)
+            }
+            if collapseLevel != .compact {
+                modeBar
+            }
             canvas.frame(height: canvasHeight)
-            logs
+            if collapseLevel == .expanded {
+                logs
+            }
             dock
         }
     }
 
     private var canvasHeight: CGFloat {
         switch collapseLevel {
-        case .expanded: return 160
-        case .compact:  return 180
-        default:        return 110
+        case .expanded: return 110
+        case .compact:  return 140
+        default:        return 100
         }
+    }
+
+    // Three icons side-by-side, same glassRow + circle-icon pattern as statusRow
+    private var tripleStatusRow: some View {
+        HStack(spacing: 8) {
+            tripleStatusBtn("mic.fill",    color: .green,                              active: micOn)          { micOn.toggle() }
+            tripleStatusBtn("brain",       color: Color(red: 0.25, green: 0.55, blue: 1.0), active: appState.isDeducing) { analysisOn.toggle() }
+            tripleStatusBtn("chevron.left.forwardslash.chevron.right",
+                            color: Color(red: 0.58, green: 0.2, blue: 0.92),
+                            active: appState.isExecuting) { codeOn.toggle() }
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 6)
+    }
+
+    private func tripleStatusBtn(_ icon: String, color: Color, active: Bool, onTap: @escaping () -> Void) -> some View {
+        Button(action: onTap) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(active ? color : Ap.iconFaint)
+                .frame(maxWidth: .infinity)
+                .frame(height: 34)
+                .background { glassRow(on: active, color: color, active: active, cornerRadius: 10) }
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     private var shell: some View {
@@ -402,10 +426,7 @@ struct SidebarView: View {
 
     private var pChips: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
-                Text("PROJECT").font(.system(size: 8, weight: .bold, design: .monospaced)).foregroundColor(Ap.textTertiary).tracking(1)
-                Text("· gesture to assign").font(.system(size: 8)).foregroundColor(Ap.textDim)
-            }
+            Text("PROJECT").font(.system(size: 8, weight: .bold, design: .monospaced)).foregroundColor(Ap.textTertiary).tracking(1)
             FlowLayout(spacing: 5) {
                 pChip("None", i: 0, sel: appState.selectedProject == nil) { appState.selectedProject = nil }
                 ForEach(Array(appState.projectStore.projects.enumerated()), id: \.element.id) { i, p in
@@ -482,12 +503,12 @@ struct SidebarView: View {
 
     // MARK: - Helpers
 
-    private func glassRow(on: Bool, color: Color, active: Bool = false) -> some View {
+    private func glassRow(on: Bool, color: Color, active: Bool = false, cornerRadius: CGFloat = 16) -> some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Ap.rowTile.opacity(active ? Ap.rowAct : (on ? Ap.rowOn : Ap.rowOff)))
-            if on { RoundedRectangle(cornerRadius: 16, style: .continuous).fill(LinearGradient(colors: [color.opacity(active ? 0.20 : 0.10), color.opacity(active ? 0.08 : 0.04)], startPoint: .top, endPoint: .bottom)) }
-            LinearGradient(colors: [Ap.spec.opacity(Ap.specOp), .clear], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.55)).clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(LinearGradient(colors: [on ? color.opacity(active ? 0.42 : 0.24) : Ap.borderOff, on ? color.opacity(active ? 0.08 : 0.06) : Ap.borderLow], startPoint: .top, endPoint: .bottom), lineWidth: 0.8)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(Ap.rowTile.opacity(active ? Ap.rowAct : (on ? Ap.rowOn : Ap.rowOff)))
+            if on { RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(LinearGradient(colors: [color.opacity(active ? 0.20 : 0.10), color.opacity(active ? 0.08 : 0.04)], startPoint: .top, endPoint: .bottom)) }
+            LinearGradient(colors: [Ap.spec.opacity(Ap.specOp), .clear], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.55)).clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).stroke(LinearGradient(colors: [on ? color.opacity(active ? 0.42 : 0.24) : Ap.borderOff, on ? color.opacity(active ? 0.08 : 0.06) : Ap.borderLow], startPoint: .top, endPoint: .bottom), lineWidth: 0.8)
         }
     }
 

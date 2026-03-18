@@ -45,7 +45,8 @@ final class TaskDeductionService: @unchecked Sendable {
     // MARK: - Deduce via Claude CLI
 
     func deduce(context: TaskContext) async throws -> TaskSuggestion {
-        alog("[Autoclaw] deduce() called — clipboard: \(context.clipboard.prefix(80))…")
+        let clipPreview = context.clipboardEntries.first?.content.prefix(80) ?? ""
+        alog("[Autoclaw] deduce() called — \(context.clipboardEntries.count) clips, \(context.userMessages.count) msgs — first clip: \(clipPreview)…")
 
         guard let claudeURL = Self.findCLI() else {
             alog("[Autoclaw] claude CLI not found")
@@ -70,10 +71,11 @@ final class TaskDeductionService: @unchecked Sendable {
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
                 process.executableURL = claudeURL
+                // Use --output-format json to get token usage in the response
                 process.arguments = [
                     "--model", "claude-haiku-4-5-20251001",
-                    "--print",
-                    prompt
+                    "-p", prompt,
+                    "--output-format", "json"
                 ]
 
                 // Strip Claude Code env vars to avoid nested session guard
@@ -87,11 +89,9 @@ final class TaskDeductionService: @unchecked Sendable {
                 let apiKey = AppSettings.shared.anthropicAPIKey
                 if !apiKey.isEmpty {
                     if apiKey.contains("-oat") {
-                        // OAuth Access Token (sk-ant-oat01-...)
                         env["CLAUDE_CODE_OAUTH_TOKEN"] = apiKey
                         env.removeValue(forKey: "ANTHROPIC_API_KEY")
                     } else {
-                        // Standard API key (sk-ant-api03-...)
                         env["ANTHROPIC_API_KEY"] = apiKey
                         env.removeValue(forKey: "CLAUDE_CODE_OAUTH_TOKEN")
                     }
@@ -106,12 +106,11 @@ final class TaskDeductionService: @unchecked Sendable {
 
                 do {
                     try process.run()
-                    // Read both pipes before waitUntilExit to avoid deadlock
                     let outData = stdout.fileHandleForReading.readDataToEndOfFile()
                     let errData = stderr.fileHandleForReading.readDataToEndOfFile()
                     process.waitUntilExit()
 
-                    let output = String(data: outData, encoding: .utf8)?
+                    let raw = String(data: outData, encoding: .utf8)?
                         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     let errMsg = String(data: errData, encoding: .utf8)?
                         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -119,19 +118,38 @@ final class TaskDeductionService: @unchecked Sendable {
                     if process.terminationStatus != 0 {
                         alog("[Autoclaw] Haiku CLI exited \(process.terminationStatus)")
                         alog("[Autoclaw] stderr: \(errMsg.prefix(400))")
-                        alog("[Autoclaw] stdout: \(output.prefix(400))")
+                        alog("[Autoclaw] stdout: \(raw.prefix(400))")
                         continuation.resume(throwing: AutoclawError.parseError(
                             "Haiku exited \(process.terminationStatus): \(errMsg.prefix(200))"
                         ))
                         return
                     }
 
-                    if output.isEmpty {
+                    if raw.isEmpty {
                         continuation.resume(throwing: AutoclawError.parseError("Haiku returned empty response"))
                         return
                     }
 
-                    continuation.resume(returning: output)
+                    // Parse the JSON envelope to extract result + log token usage
+                    if let data = raw.data(using: .utf8),
+                       let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        // Log token usage
+                        if let usage = envelope["usage"] as? [String: Any] {
+                            let inTok  = usage["input_tokens"]  as? Int ?? 0
+                            let outTok = usage["output_tokens"] as? Int ?? 0
+                            let cost   = envelope["total_cost_usd"] as? Double ?? 0
+                            alog("[Autoclaw] Haiku tokens — in:\(inTok) out:\(outTok) cost:$\(String(format: "%.5f", cost))")
+                        }
+                        // Extract the actual model response text
+                        if let result = envelope["result"] as? String {
+                            continuation.resume(returning: result)
+                            return
+                        }
+                    }
+
+                    // Fallback: treat raw output as the response
+                    alog("[Autoclaw] Warning: could not parse JSON envelope, using raw output")
+                    continuation.resume(returning: raw)
                 } catch {
                     alog("[Autoclaw] Haiku CLI failed: \(error.localizedDescription)")
                     continuation.resume(throwing: error)
@@ -143,38 +161,67 @@ final class TaskDeductionService: @unchecked Sendable {
     // MARK: - Prompt
 
     private func buildPrompt(context: TaskContext) -> String {
-        """
-        You are Autoclaw, an ambient AI assistant embedded in a macOS app. The user just copied something to their clipboard while working. Your job is to deduce what task they need help with.
+        var sections: [String] = []
 
-        ## Active Window Context
-        - **App**: \(context.activeApp)
-        - **Window title**: \(context.windowTitle)
+        sections.append("You are Autoclaw, an ambient AI assistant embedded in a macOS app. The user has been building up context — clipboard captures, messages, and possibly screenshots — and is now asking you to deduce what task they need help with.")
 
-        ## Clipboard Content
-        ```
-        \(context.clipboard)
-        ```
+        // Clipboard entries
+        if !context.clipboardEntries.isEmpty {
+            sections.append("## Clipboard Captures")
+            for (i, entry) in context.clipboardEntries.enumerated() {
+                sections.append("""
+                ### Capture \(i + 1)
+                - **App**: \(entry.app)
+                - **Window**: \(entry.window)
+                ```
+                \(entry.content)
+                ```
+                """)
+            }
+        }
 
+        // User messages (explicit intent)
+        if !context.userMessages.isEmpty {
+            sections.append("## User Messages")
+            for msg in context.userMessages {
+                sections.append("- \"\(msg)\"")
+            }
+            sections.append("\nThe user messages above are explicit instructions about what they want. Prioritize these over guessing from clipboard content alone.")
+        }
+
+        // Screenshots
+        if !context.screenshotPaths.isEmpty {
+            sections.append("## Screenshots")
+            sections.append("\(context.screenshotPaths.count) screenshot(s) were captured as additional context.")
+        }
+
+        sections.append("""
         ## Instructions
-        Based on the clipboard content and the active window context, deduce what the user needs.
+        Based on ALL the context above, deduce what the user needs AND determine the kind of response.
 
-        If you can confidently determine a task, respond with:
+        Choose the correct "kind":
+        - "execute" — task requires running code, making file changes, shell commands, git operations, creating PRs, etc. User needs Claude Code to act on their project.
+        - "draft" — user needs a piece of text to use directly: email reply, message, document, commit message, PR description, etc. Output the ready-to-use text in "draft".
+        - "answer" — user needs information, explanation, lookup, translation, summary, etc. Put the answer in "draft".
+
+        Respond with:
         {
           "type": "task",
-          "title": "Short task title (max 10 words)",
-          "draft": "The concrete draft output. Be specific and ready-to-use.",
+          "kind": "execute" | "draft" | "answer",
+          "title": "Short title (max 10 words)",
+          "draft": "The concrete output — ready-to-use text for draft/answer, or a description of the code change for execute.",
           "skills": ["skill-1", "skill-2"],
-          "completionPlan": "Step 1: ...\\nStep 2: ...\\nStep 3: ...",
+          "completionPlan": "Step 1: ...\\nStep 2: ...",
           "confidence": 0.0 to 1.0
         }
 
-        Skills should be an ordered list of tools/approaches needed. Examples:
+        For "execute" tasks, skills are the ordered tool chain:
         - ["code-edit"] for a single code change
         - ["research", "code-edit", "run-tests"] for research → implement → verify
-        - ["reply-email"] for drafting a reply
-        - ["create-github-issue", "code-edit", "create-pr"] for a full issue-to-PR workflow
+        - ["create-github-issue", "code-edit", "create-pr"] for full issue-to-PR workflow
+        For "draft" or "answer" tasks, skills can be empty or omitted.
 
-        If you need more information or the task is ambiguous, respond with:
+        If the task is ambiguous or you need more information, respond with:
         {
           "type": "clarification",
           "question": "What specifically do you want to do with this?",
@@ -183,7 +230,9 @@ final class TaskDeductionService: @unchecked Sendable {
         }
 
         Respond with ONLY valid JSON (no markdown fences).
-        """
+        """)
+
+        return sections.joined(separator: "\n\n")
     }
 
     // MARK: - Parse Response (direct JSON from CLI --print output)
@@ -240,6 +289,7 @@ final class TaskDeductionService: @unchecked Sendable {
                 skills: [],
                 completionPlan: nil,
                 confidence: 0,
+                kind: .clarification,
                 clarification: clarification
             )
         }
@@ -252,9 +302,19 @@ final class TaskDeductionService: @unchecked Sendable {
             skills = [single]
         }
 
+        // Parse kind — default to .execute if skills present, else .answer
+        let kindRaw = result["kind"] as? String ?? ""
+        let kind: TaskKind
+        switch kindRaw {
+        case "draft":   kind = .draft
+        case "answer":  kind = .answer
+        case "execute": kind = .execute
+        default:        kind = skills.isEmpty ? .answer : .execute
+        }
+
         let title = result["title"] as? String ?? "Task"
         let confidence = result["confidence"] as? Double ?? 0.5
-        alog("[Autoclaw] Parsed suggestion: '\(title)' confidence=\(confidence) skills=\(skills)")
+        alog("[Autoclaw] Parsed suggestion: '\(title)' kind=\(kind) confidence=\(confidence) skills=\(skills)")
 
         return TaskSuggestion(
             title: title,
@@ -262,6 +322,7 @@ final class TaskDeductionService: @unchecked Sendable {
             skills: skills,
             completionPlan: result["completionPlan"] as? String,
             confidence: confidence,
+            kind: kind,
             clarification: nil
         )
     }

@@ -177,93 +177,9 @@ struct HomeView: View {
                 Spacer()
             } else if appState.isExecuting || !appState.executionOutput.isEmpty {
                 ExecutionView(appState: appState)
-            } else if appState.isDeducing {
-                Spacer()
-                VStack(spacing: 12) {
-                    ProgressView()
-                    Text("Analyzing clipboard with Haiku...")
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-            } else if appState.needsProjectSelection {
-                Spacer()
-                VStack(spacing: 12) {
-                    Image(systemName: "folder.badge.questionmark")
-                        .font(.system(size: 32))
-                        .foregroundColor(.orange)
-                    Text("Clipboard captured! Select a project above.")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.secondary)
-
-                    if !appState.lastClipboard.isEmpty {
-                        Text(String(appState.lastClipboard.prefix(120)) + (appState.lastClipboard.count > 120 ? "..." : ""))
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .padding(8)
-                            .frame(maxWidth: 400, alignment: .leading)
-                            .background(Color.black.opacity(0.05))
-                            .cornerRadius(6)
-                    }
-                }
-                Spacer()
-            } else if let suggestion = appState.currentSuggestion {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Image(systemName: "sparkles")
-                                .foregroundColor(.yellow)
-                            Text(suggestion.title)
-                                .font(.system(size: 16, weight: .semibold))
-                            Spacer()
-                            if !suggestion.skills.isEmpty {
-                                HStack(spacing: 4) {
-                                    ForEach(suggestion.skills, id: \.self) { skill in
-                                        Text(skill)
-                                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(Color.blue.opacity(0.15))
-                                            .cornerRadius(4)
-                                    }
-                                }
-                            }
-                        }
-
-                        Divider()
-
-                        Text(suggestion.draft)
-                            .font(.system(size: 13))
-                            .textSelection(.enabled)
-
-                        if let plan = suggestion.completionPlan {
-                            Divider()
-                            Text("Completion Plan")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.secondary)
-                            Text(plan)
-                                .font(.system(size: 12))
-                                .foregroundColor(.secondary)
-                        }
-
-                        Divider()
-
-                        HStack {
-                            Button("Dismiss") {
-                                appState.dismissSuggestion()
-                            }
-                            .buttonStyle(.bordered)
-
-                            Spacer()
-
-                            Button("Approve & Execute") {
-                                appState.approveSuggestion()
-                            }
-                            .buttonStyle(.borderedProminent)
-                        }
-                    }
-                    .padding(16)
-                }
+            } else if !appState.threadMessages.isEmpty {
+                // Show current session thread
+                SessionThreadView(appState: appState)
             } else {
                 Spacer()
                 VStack(spacing: 12) {
@@ -279,8 +195,7 @@ struct HomeView: View {
                             Label(appState.activeApp, systemImage: "app.fill")
                             if !appState.activeWindowTitle.isEmpty {
                                 Text("—")
-                                Text(appState.activeWindowTitle)
-                                    .lineLimit(1)
+                                Text(appState.activeWindowTitle).lineLimit(1)
                             }
                         }
                         .font(.system(size: 11))
@@ -456,5 +371,215 @@ struct ThreadRow: View {
             .buttonStyle(.borderless)
         }
         .padding(.vertical, 6)
+    }
+}
+
+// MARK: - Session Thread View (current session messages in main panel)
+
+struct SessionThreadView: View {
+    @ObservedObject var appState: AppState
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(appState.threadMessages) { msg in
+                        sessionMessageRow(msg)
+                            .id(msg.id)
+                    }
+
+                    if appState.isDeducing {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Analyzing with Haiku…")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.cyan.opacity(0.05))
+                        .cornerRadius(8)
+                    }
+                }
+                .padding(16)
+            }
+            .onChange(of: appState.threadMessages.count) { _ in
+                if let last = appState.threadMessages.last {
+                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sessionMessageRow(_ msg: ThreadMessage) -> some View {
+        switch msg {
+        case .clipboard(_, let content, let app, let window, _):
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: "doc.on.clipboard").font(.system(size: 10)).foregroundColor(.secondary)
+                    if !app.isEmpty { Text(app).font(.system(size: 10)).foregroundColor(.secondary) }
+                    if !window.isEmpty { Text("· \(window)").font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1) }
+                    Spacer()
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(content, forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc").font(.system(size: 10))
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundColor(.secondary)
+                }
+                Text(content)
+                    .font(.system(size: 11, design: .monospaced))
+                    .textSelection(.enabled)
+                    .lineLimit(6)
+                    .foregroundColor(.primary)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.04))
+            .cornerRadius(8)
+
+        case .screenshot(_, let path, _):
+            HStack(spacing: 8) {
+                Image(systemName: "camera.fill").foregroundColor(.green)
+                if let img = NSImage(contentsOfFile: path) {
+                    Image(nsImage: img)
+                        .resizable().aspectRatio(contentMode: .fit)
+                        .frame(maxHeight: 120).cornerRadius(6)
+                } else {
+                    Text("Screenshot").font(.system(size: 11)).foregroundColor(.secondary)
+                }
+            }
+            .padding(10)
+            .background(Color.green.opacity(0.05))
+            .cornerRadius(8)
+
+        case .userMessage(_, let text, _):
+            HStack {
+                Spacer(minLength: 60)
+                Text(text)
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Color.accentColor.opacity(0.15))
+                    .cornerRadius(12)
+                    .textSelection(.enabled)
+            }
+
+        case .haiku(_, let suggestion, _):
+            panelHaikuCard(suggestion)
+
+        case .execution(_, let output, _):
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Executed", systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.green)
+                Text(output)
+                    .font(.system(size: 11, design: .monospaced))
+                    .lineLimit(20)
+                    .textSelection(.enabled)
+                    .foregroundColor(.primary)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.green.opacity(0.05))
+            .cornerRadius(8)
+
+        case .error(_, let message, _):
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Error", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.red)
+                Text(message).font(.system(size: 11)).foregroundColor(.secondary)
+                Button("Retry") { appState.sendToHaiku() }
+                    .buttonStyle(.borderedProminent).tint(.red).controlSize(.small)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.red.opacity(0.05))
+            .cornerRadius(8)
+        }
+    }
+
+    @ViewBuilder
+    private func panelHaikuCard(_ suggestion: TaskSuggestion) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Title + kind badge
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles").foregroundColor(.yellow)
+                Text(suggestion.title).font(.system(size: 14, weight: .semibold)).lineLimit(2)
+                Spacer()
+                kindBadge(suggestion.kind)
+            }
+
+            if !suggestion.skills.isEmpty {
+                HStack(spacing: 4) {
+                    ForEach(suggestion.skills, id: \.self) { skill in
+                        Text(skill)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.blue.opacity(0.12)).cornerRadius(4)
+                    }
+                }
+            }
+
+            Divider()
+
+            Text(suggestion.draft)
+                .font(.system(size: 12))
+                .textSelection(.enabled)
+                .lineLimit(suggestion.kind == .execute ? 4 : nil)
+
+            if let plan = suggestion.completionPlan {
+                Divider()
+                Text("Plan").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                Text(plan).font(.system(size: 11)).foregroundColor(.secondary)
+            }
+
+            Divider()
+
+            // CTAs based on kind
+            HStack {
+                switch suggestion.kind {
+                case .execute:
+                    Button("Skip") { appState.dismissSuggestion() }.buttonStyle(.bordered)
+                    Spacer()
+                    Button("Run") { appState.approveSuggestion() }.buttonStyle(.borderedProminent)
+                case .draft, .answer:
+                    Button("Dismiss") { appState.dismissSuggestion() }.buttonStyle(.bordered)
+                    Spacer()
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(suggestion.draft, forType: .string)
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(suggestion.kind == .draft ? .green : .cyan)
+                case .clarification:
+                    EmptyView()
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.yellow.opacity(0.04))
+        .cornerRadius(10)
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.yellow.opacity(0.15), lineWidth: 1))
+    }
+
+    private func kindBadge(_ kind: TaskKind) -> some View {
+        let (label, color): (String, Color) = switch kind {
+        case .execute:      ("Execute", .blue)
+        case .draft:        ("Draft", .green)
+        case .answer:       ("Answer", .cyan)
+        case .clarification: ("Question", .purple)
+        }
+        return Text(label)
+            .font(.system(size: 9, weight: .bold, design: .monospaced))
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(color.opacity(0.15)).cornerRadius(4)
+            .foregroundColor(color)
     }
 }

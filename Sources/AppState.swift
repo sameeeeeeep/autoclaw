@@ -21,6 +21,10 @@ final class AppState: ObservableObject {
     @Published var sessionScreenshotPath: String?
     @Published var currentThread: SessionThread?
 
+    // MARK: - Thread (the chat thread in the toast)
+    @Published var threadMessages: [ThreadMessage] = []
+    @Published var showThread = false
+
     // MARK: - Task Flow
     @Published var currentSuggestion: TaskSuggestion?
     @Published var isDeducing = false
@@ -83,6 +87,8 @@ final class AppState: ObservableObject {
         deductionError = nil
         pendingClarification = nil
         needsProjectSelection = false
+        threadMessages = []
+        showThread = false
         statusLine = "Session started"
 
         // Always create thread — attach project now or later
@@ -105,6 +111,8 @@ final class AppState: ObservableObject {
         deductionError = nil
         pendingClarification = nil
         needsProjectSelection = false
+        threadMessages = []
+        showThread = false
         statusLine = "Resumed: \(thread.title)"
 
         // Set the project to match the thread's project
@@ -129,6 +137,8 @@ final class AppState: ObservableObject {
         needsProjectSelection = false
         currentSessionId = nil
         currentThread = nil
+        threadMessages = []
+        showThread = false
         statusLine = "Ready"
 
         if let path = sessionScreenshotPath {
@@ -211,7 +221,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    // MARK: - Clipboard -> Deduction
+    // MARK: - Clipboard -> Thread (no longer auto-deduces)
 
     private func handleClipboardChange(_ content: String) {
         guard sessionActive, !isDeducing, !isExecuting else { return }
@@ -219,15 +229,30 @@ final class AppState: ObservableObject {
         lastClipboard = content
         clipboardCapturedApp = activeApp
         clipboardCapturedWindow = activeWindowTitle
-        statusLine = "Clipboard captured"
 
         if selectedProject == nil {
-            needsProjectSelection = true
-            statusLine = "Select a project"
-        } else {
-            needsProjectSelection = false
-            deduceTask()
+            // Auto-select the only project if there's exactly one
+            if projectStore.projects.count == 1 {
+                selectedProject = projectStore.projects[0]
+            } else {
+                needsProjectSelection = true
+                statusLine = "Select a project"
+                return
+            }
         }
+
+        needsProjectSelection = false
+
+        // Append clipboard entry to thread instead of auto-deducing
+        let msg = ThreadMessage.clipboard(
+            content: content,
+            app: clipboardCapturedApp,
+            window: clipboardCapturedWindow
+        )
+        threadMessages.append(msg)
+        showThread = true
+        statusLine = "Clipboard captured"
+        print("[Autoclaw] Clipboard appended to thread (\(threadMessages.count) messages)")
     }
 
     func projectSelectedAfterClipboard(_ project: Project) {
@@ -244,14 +269,50 @@ final class AppState: ObservableObject {
             currentThread = sessionStore.createThread(sessionId: sid, projectId: project.id)
         }
 
+        // Re-process the pending clipboard now that we have a project
         if !lastClipboard.isEmpty {
-            deduceTask()
+            let msg = ThreadMessage.clipboard(
+                content: lastClipboard,
+                app: clipboardCapturedApp,
+                window: clipboardCapturedWindow
+            )
+            threadMessages.append(msg)
+            showThread = true
+            statusLine = "Clipboard captured"
         }
     }
 
-    func deduceTask() {
+    // MARK: - Thread Actions
+
+    /// User typed a message in the thread input
+    func sendMessage(_ text: String) {
+        threadMessages.append(.userMessage(text: text))
+        sendToHaiku()
+    }
+
+    /// Send accumulated context to Haiku for deduction
+    func sendToHaiku() {
         guard let project = selectedProject else { return }
-        guard !lastClipboard.isEmpty else { return }
+
+        // Gather context from thread
+        var clipboardEntries: [ClipboardEntry] = []
+        var userMessages: [String] = []
+        var screenshotPaths: [String] = []
+
+        for msg in threadMessages {
+            switch msg {
+            case .clipboard(_, let content, let app, let window, _):
+                clipboardEntries.append(ClipboardEntry(content: content, app: app, window: window))
+            case .userMessage(_, let text, _):
+                userMessages.append(text)
+            case .screenshot(_, let path, _):
+                screenshotPaths.append(path)
+            default:
+                break
+            }
+        }
+
+        guard !clipboardEntries.isEmpty || !userMessages.isEmpty else { return }
 
         isDeducing = true
         currentSuggestion = nil
@@ -260,11 +321,10 @@ final class AppState: ObservableObject {
         statusLine = "Analyzing..."
 
         let context = TaskContext(
-            clipboard: lastClipboard,
-            activeApp: clipboardCapturedApp,
-            windowTitle: clipboardCapturedWindow,
-            project: project,
-            screenshotPath: sessionScreenshotPath
+            clipboardEntries: clipboardEntries,
+            userMessages: userMessages,
+            screenshotPaths: screenshotPaths,
+            project: project
         )
 
         Task { @MainActor in
@@ -272,14 +332,17 @@ final class AppState: ObservableObject {
                 let suggestion = try await taskDeductionService.deduce(context: context)
 
                 if suggestion.needsClarification {
-                    print("[Autoclaw] Setting pendingClarification: \(suggestion.clarification?.question ?? "?")")
+                    print("[Autoclaw] Haiku needs clarification: \(suggestion.clarification?.question ?? "?")")
                     self.pendingClarification = suggestion.clarification
                     self.currentSuggestion = nil
+                    // Show clarification as a haiku message in thread
+                    self.threadMessages.append(.haiku(suggestion: suggestion))
                     self.statusLine = "Needs info"
                 } else {
-                    print("[Autoclaw] Setting currentSuggestion: \(suggestion.title)")
+                    print("[Autoclaw] Haiku suggestion: \(suggestion.title)")
                     self.currentSuggestion = suggestion
                     self.pendingClarification = nil
+                    self.threadMessages.append(.haiku(suggestion: suggestion))
                     self.statusLine = suggestion.title
                 }
             } catch {
@@ -287,47 +350,75 @@ final class AppState: ObservableObject {
                 self.deductionError = error.localizedDescription
                 self.currentSuggestion = nil
                 self.pendingClarification = nil
+                self.threadMessages.append(.error(message: error.localizedDescription))
                 self.statusLine = "Deduction failed"
             }
             self.isDeducing = false
         }
     }
 
-    // MARK: - Clarification Response
+    /// Add a screenshot to the thread context
+    func addScreenshotToThread() {
+        guard let cgImage = CGWindowListCreateImage(
+            CGRect.null,
+            .optionOnScreenOnly,
+            kCGNullWindowID,
+            [.nominalResolution]
+        ) else {
+            print("[Autoclaw] Failed to capture screenshot for thread")
+            return
+        }
+
+        let srcW = CGFloat(cgImage.width)
+        let srcH = CGFloat(cgImage.height)
+        let maxW: CGFloat = 1024
+        let scale = srcW > maxW ? maxW / srcW : 1.0
+        let dstW = Int(srcW * scale)
+        let dstH = Int(srcH * scale)
+
+        let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: dstW, height: dstH))
+
+        guard let resized = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: dstW,
+            pixelsHigh: dstH,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return }
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: resized)
+        nsImage.draw(in: NSRect(x: 0, y: 0, width: dstW, height: dstH))
+        NSGraphicsContext.restoreGraphicsState()
+
+        guard let jpegData = resized.representation(using: .jpeg, properties: [.compressionFactor: 0.6]) else { return }
+
+        let tmpDir = NSTemporaryDirectory()
+        let filename = "autoclaw_thread_\(UUID().uuidString.prefix(8)).jpg"
+        let path = (tmpDir as NSString).appendingPathComponent(filename)
+
+        do {
+            try jpegData.write(to: URL(fileURLWithPath: path))
+            threadMessages.append(.screenshot(path: path))
+            showThread = true
+            let sizeKB = jpegData.count / 1024
+            print("[Autoclaw] Thread screenshot saved: \(path) (\(sizeKB)KB)")
+        } catch {
+            print("[Autoclaw] Failed to write thread screenshot: \(error)")
+        }
+    }
+
+    // MARK: - Clarification Response (now via thread)
 
     func respondToClarification(_ answer: String) {
-        guard let project = selectedProject else { return }
         pendingClarification = nil
-
-        let augmented = lastClipboard + "\n\n[User clarification: \(answer)]"
-        lastClipboard = augmented
-
-        isDeducing = true
-        currentSuggestion = nil
-        deductionError = nil
-        statusLine = "Re-analyzing..."
-
-        let context = TaskContext(
-            clipboard: augmented,
-            activeApp: clipboardCapturedApp,
-            windowTitle: clipboardCapturedWindow,
-            project: project,
-            screenshotPath: sessionScreenshotPath
-        )
-
-        Task {
-            do {
-                let suggestion = try await taskDeductionService.deduce(context: context)
-                if suggestion.needsClarification {
-                    self.pendingClarification = suggestion.clarification
-                } else {
-                    self.currentSuggestion = suggestion
-                }
-            } catch {
-                self.deductionError = error.localizedDescription
-            }
-            self.isDeducing = false
-        }
+        threadMessages.append(.userMessage(text: answer))
+        sendToHaiku()
     }
 
     func dismissClarification() {
@@ -363,15 +454,24 @@ final class AppState: ObservableObject {
                 for try await chunk in claudeCodeRunner.execute(suggestion: suggestion, project: project, sessionId: currentSessionId) {
                     self.executionOutput += chunk
                 }
+                // Add execution result to thread
+                self.threadMessages.append(.execution(output: self.executionOutput))
             } catch {
-                self.executionOutput += "\n[Error: \(error.localizedDescription)]"
+                let errMsg = error.localizedDescription
+                self.executionOutput += "\n[Error: \(errMsg)]"
+                self.threadMessages.append(.error(message: errMsg))
             }
             self.isExecuting = false
+            self.statusLine = "Done"
         }
     }
 
     func dismissSuggestion() {
         currentSuggestion = nil
         statusLine = "Listening..."
+    }
+
+    func dismissThread() {
+        showThread = false
     }
 }
