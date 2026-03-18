@@ -15,6 +15,7 @@ final class AppState: ObservableObject {
 
     // MARK: - Session State
     @Published var sessionActive = false
+    @Published var sessionPaused = false
     @Published var selectedProject: Project?
     @Published var needsProjectSelection = false
     @Published var currentSessionId: String?
@@ -66,6 +67,30 @@ final class AppState: ObservableObject {
 
         activeWindowService.$windowTitle
             .assign(to: &$activeWindowTitle)
+
+        // Update context chip in thread when active app changes during session
+        activeWindowService.$appName
+            .removeDuplicates()
+            .sink { [weak self] app in
+                Task { @MainActor in
+                    self?.handleContextChange(app: app)
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func handleContextChange(app: String) {
+        guard sessionActive, !app.isEmpty else { return }
+        let window = activeWindowTitle
+
+        // Replace existing context message or add new one
+        if let idx = threadMessages.lastIndex(where: {
+            if case .context = $0 { return true }; return false
+        }) {
+            threadMessages[idx] = .context(app: app, window: window)
+        } else {
+            threadMessages.append(.context(app: app, window: window))
+        }
     }
 
     // MARK: - Session
@@ -87,7 +112,6 @@ final class AppState: ObservableObject {
         pendingClarification = nil
         needsProjectSelection = false
         threadMessages = []
-        showThread = false
         statusLine = "Session started"
 
         // Always create thread — attach project now or later
@@ -96,7 +120,35 @@ final class AppState: ObservableObject {
             currentThread = sessionStore.createThread(sessionId: sid, projectId: projectId)
         }
 
+        // Add initial context chip and show toast immediately
+        if !activeApp.isEmpty {
+            threadMessages.append(.context(app: activeApp, window: activeWindowTitle))
+        }
+        showThread = true
+
         print("[Autoclaw] Session started: \(currentSessionId ?? "?")")
+    }
+
+    func pauseSession() {
+        guard sessionActive, !sessionPaused else { return }
+        sessionPaused = true
+        statusLine = "Paused"
+        print("[Autoclaw] Session paused: \(currentSessionId ?? "?")")
+    }
+
+    func resumeSessionFromPause() {
+        guard sessionActive, sessionPaused else { return }
+        sessionPaused = false
+        statusLine = "Session active"
+        print("[Autoclaw] Session resumed from pause: \(currentSessionId ?? "?")")
+    }
+
+    func togglePause() {
+        if sessionPaused {
+            resumeSessionFromPause()
+        } else {
+            pauseSession()
+        }
     }
 
     /// Resume an existing session thread
@@ -125,6 +177,7 @@ final class AppState: ObservableObject {
     func endSession() {
         let ended = currentSessionId
         sessionActive = false
+        sessionPaused = false
         currentSuggestion = nil
         isDeducing = false
         isExecuting = false
@@ -218,6 +271,7 @@ final class AppState: ObservableObject {
         var clipboardEntries: [ClipboardEntry] = []
         var userMessages: [String] = []
         var screenshotPaths: [String] = []
+        var attachmentPaths: [String] = []
 
         for msg in threadMessages {
             switch msg {
@@ -227,12 +281,14 @@ final class AppState: ObservableObject {
                 userMessages.append(text)
             case .screenshot(_, let path, _):
                 screenshotPaths.append(path)
+            case .attachment(_, let path, _, _, _):
+                attachmentPaths.append(path)
             default:
                 break
             }
         }
 
-        guard !clipboardEntries.isEmpty || !userMessages.isEmpty else { return }
+        guard !clipboardEntries.isEmpty || !userMessages.isEmpty || !attachmentPaths.isEmpty else { return }
 
         isDeducing = true
         currentSuggestion = nil
@@ -244,6 +300,7 @@ final class AppState: ObservableObject {
             clipboardEntries: clipboardEntries,
             userMessages: userMessages,
             screenshotPaths: screenshotPaths,
+            attachmentPaths: attachmentPaths,
             project: project
         )
 
@@ -330,6 +387,22 @@ final class AppState: ObservableObject {
             print("[Autoclaw] Thread screenshot saved: \(path) (\(sizeKB)KB)")
         } catch {
             print("[Autoclaw] Failed to write thread screenshot: \(error)")
+        }
+    }
+
+    // MARK: - File Attachments
+
+    func addAttachments(_ urls: [URL]) {
+        for url in urls {
+            guard url.isFileURL else { continue }
+            let path = url.path
+            let name = url.lastPathComponent
+            let size: Int64 = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
+            threadMessages.append(.attachment(path: path, name: name, size: size))
+            print("[Autoclaw] Attachment added: \(name) (\(ThreadMessage.formatSize(size)))")
+        }
+        if !urls.isEmpty {
+            showThread = true
         }
     }
 

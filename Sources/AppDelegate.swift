@@ -12,6 +12,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeyMonitor: GlobalHotkeyMonitor!
     private var cancellables = Set<AnyCancellable>()
 
+    // Menu bar icon variants
+    private var defaultIcon: NSImage?
+    private var activeIcon: NSImage?
+
     let appState = AppState.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -28,15 +32,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+
+        // Load both icon variants
+        if let path = Bundle.main.path(forResource: "menubar_icon", ofType: "png"),
+           let img = NSImage(contentsOfFile: path) {
+            img.size = NSSize(width: 18, height: 18)
+            img.isTemplate = false
+            defaultIcon = img
+        }
+        if let path = Bundle.main.path(forResource: "menubar_icon_green", ofType: "png"),
+           let img = NSImage(contentsOfFile: path) {
+            img.size = NSSize(width: 18, height: 18)
+            img.isTemplate = false
+            activeIcon = img
+        }
+
         if let button = statusItem.button {
-            if let logoPath = Bundle.main.path(forResource: "menubar_icon", ofType: "png"),
-               let img = NSImage(contentsOfFile: logoPath) {
-                img.size = NSSize(width: 18, height: 18)
-                img.isTemplate = false  // keep original colors
-                button.image = img
-            } else {
-                button.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Autoclaw")
-            }
+            button.image = defaultIcon ?? NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Autoclaw")
             button.action = #selector(statusItemClicked)
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -55,6 +67,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showStatusMenu() {
         let menu = NSMenu()
         menu.addItem(withTitle: "Toggle Panel", action: #selector(togglePanel), keyEquivalent: "")
+
+        let widgetTitle = pillWindow.isVisible ? "Hide Widget" : "Show Widget"
+        menu.addItem(withTitle: widgetTitle, action: #selector(toggleWidget), keyEquivalent: "")
+
         menu.addItem(.separator())
         if appState.sessionActive {
             let sessionItem = NSMenuItem(title: "Session: \(appState.currentSessionId?.prefix(8) ?? "active")…", action: nil, keyEquivalent: "")
@@ -76,6 +92,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func startSession() { appState.startSession() }
     @objc private func quitApp() { NSApp.terminate(nil) }
 
+    @objc private func toggleWidget() {
+        if pillWindow.isVisible {
+            pillWindow.orderOut(nil)
+        } else {
+            pillWindow.orderFront(nil)
+        }
+    }
+
     private func setupPillWindow() {
         pillWindow = PillWindow(appState: appState)
         pillWindow.orderFront(nil)
@@ -92,9 +116,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupHotkey() {
-        hotkeyMonitor = GlobalHotkeyMonitor { [weak self] in
-            self?.appState.toggleSession()
-        }
+        hotkeyMonitor = GlobalHotkeyMonitor(
+            onToggle: { [weak self] in self?.appState.toggleSession() },
+            onPause:  { [weak self] in
+                guard let s = self?.appState else { return }
+                if s.sessionActive { s.togglePause() } else { s.toggleSession() }
+            },
+            onEnd:    { [weak self] in self?.appState.endSession() }
+        )
         hotkeyMonitor.start()
     }
 
@@ -106,6 +135,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - State Observation
 
     private func observeState() {
+        // Swap menu bar icon based on session state
+        appState.$sessionActive
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] active in
+                guard let self else { return }
+                let icon = active ? (self.activeIcon ?? self.defaultIcon) : self.defaultIcon
+                self.statusItem.button?.image = icon ?? NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Autoclaw")
+            }
+            .store(in: &cancellables)
+
         // Show project picker toast when clipboard captured without project
         appState.$needsProjectSelection
             .removeDuplicates()
@@ -184,6 +224,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         threadWindow.show(with: view)
+
+        // Enable file drag & drop on the thread toast
+        threadWindow.onFilesDropped = { [weak self] urls in
+            self?.appState.addAttachments(urls)
+        }
+        threadWindow.enableFileDrop()
     }
 
     private func showProjectPickerToast() {

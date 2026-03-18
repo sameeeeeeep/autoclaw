@@ -82,4 +82,47 @@ final class ToastWindow: NSPanel {
     var allowsKeyboard = false
     override var canBecomeKey: Bool { allowsKeyboard }
     override var canBecomeMain: Bool { false }
+
+    /// Enable file drag & drop — calls handler with dropped file URLs
+    var onFilesDropped: (([URL]) -> Void)?
+
+    func enableFileDrop() {
+        // Use a transparent drop overlay on the content view
+        guard let cv = contentView else { return }
+        let dropView = DropTargetView { [weak self] urls in
+            self?.onFilesDropped?(urls)
+        }
+        dropView.translatesAutoresizingMaskIntoConstraints = false
+        cv.addSubview(dropView)
+        NSLayoutConstraint.activate([
+            dropView.topAnchor.constraint(equalTo: cv.topAnchor),
+            dropView.bottomAnchor.constraint(equalTo: cv.bottomAnchor),
+            dropView.leadingAnchor.constraint(equalTo: cv.leadingAnchor),
+            dropView.trailingAnchor.constraint(equalTo: cv.trailingAnchor),
+        ])
+    }
+}
+
+// MARK: - Drop Target View
+
+private final class DropTargetView: NSView {
+    var handler: (([URL]) -> Void)?
+
+    convenience init(handler: @escaping ([URL]) -> Void) {
+        self.init(frame: .zero)
+        self.handler = handler
+        registerForDraggedTypes([.fileURL])
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let items = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [
+            .urlReadingFileURLsOnly: true
+        ]) as? [URL], !items.isEmpty else { return false }
+        handler?(items)
+        return true
+    }
 }

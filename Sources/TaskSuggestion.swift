@@ -41,6 +41,8 @@ enum ThreadMessage: Identifiable {
     case haiku(id: UUID = UUID(), suggestion: TaskSuggestion, date: Date = Date())
     case execution(id: UUID = UUID(), output: String, date: Date = Date())
     case error(id: UUID = UUID(), message: String, date: Date = Date())
+    case context(id: UUID = UUID(), app: String, window: String, date: Date = Date())
+    case attachment(id: UUID = UUID(), path: String, name: String, size: Int64, date: Date = Date())
 
     var id: UUID {
         switch self {
@@ -50,6 +52,8 @@ enum ThreadMessage: Identifiable {
         case .haiku(let id, _, _): return id
         case .execution(let id, _, _): return id
         case .error(let id, _, _): return id
+        case .context(let id, _, _, _): return id
+        case .attachment(let id, _, _, _, _): return id
         }
     }
 
@@ -61,7 +65,36 @@ enum ThreadMessage: Identifiable {
         case .haiku(_, _, let d): return d
         case .execution(_, _, let d): return d
         case .error(_, _, let d): return d
+        case .context(_, _, _, let d): return d
+        case .attachment(_, _, _, _, let d): return d
         }
+    }
+
+    /// File extension icon mapping
+    static func iconForFile(_ name: String) -> String {
+        let ext = (name as NSString).pathExtension.lowercased()
+        switch ext {
+        case "pdf": return "doc.richtext"
+        case "xlsx", "xls", "csv": return "tablecells"
+        case "docx", "doc", "rtf": return "doc.text"
+        case "png", "jpg", "jpeg", "gif", "webp", "heic": return "photo"
+        case "mp4", "mov", "avi": return "film"
+        case "mp3", "wav", "aac", "m4a": return "waveform"
+        case "zip", "tar", "gz", "rar": return "archivebox"
+        case "swift", "py", "js", "ts", "rb", "go", "rs": return "chevron.left.forwardslash.chevron.right"
+        case "json", "yaml", "yml", "xml", "plist": return "curlybraces"
+        case "txt", "md": return "doc.plaintext"
+        default: return "doc"
+        }
+    }
+
+    /// Human-readable file size
+    static func formatSize(_ bytes: Int64) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        let kb = Double(bytes) / 1024
+        if kb < 1024 { return String(format: "%.0f KB", kb) }
+        let mb = kb / 1024
+        return String(format: "%.1f MB", mb)
     }
 }
 
@@ -77,5 +110,6 @@ struct TaskContext {
     let clipboardEntries: [ClipboardEntry]
     let userMessages: [String]
     let screenshotPaths: [String]
+    let attachmentPaths: [String]
     let project: Project
 }

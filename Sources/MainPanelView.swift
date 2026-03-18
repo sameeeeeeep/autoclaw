@@ -440,19 +440,19 @@ struct SessionThreadView: View {
             .cornerRadius(8)
 
         case .screenshot(_, let path, _):
-            HStack(spacing: 8) {
-                Image(systemName: "camera.fill").foregroundColor(.green)
-                if let img = NSImage(contentsOfFile: path) {
-                    Image(nsImage: img)
-                        .resizable().aspectRatio(contentMode: .fit)
-                        .frame(maxHeight: 120).cornerRadius(6)
-                } else {
-                    Text("Screenshot").font(.system(size: 11)).foregroundColor(.secondary)
+            HStack(spacing: 3) {
+                Image(systemName: "camera.fill").font(.system(size: 9))
+                Text("Screenshot").font(.system(size: 10, weight: .medium)).lineLimit(1)
+                if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+                   let size = attrs[.size] as? Int64 {
+                    Text("· \(ThreadMessage.formatSize(size))")
+                        .font(.system(size: 9)).foregroundColor(.green.opacity(0.7))
                 }
             }
-            .padding(10)
-            .background(Color.green.opacity(0.05))
-            .cornerRadius(8)
+            .foregroundColor(.green)
+            .padding(.horizontal, 6).padding(.vertical, 3)
+            .background(Color.green.opacity(0.12))
+            .clipShape(Capsule())
 
         case .userMessage(_, let text, _):
             HStack {
@@ -497,6 +497,43 @@ struct SessionThreadView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.red.opacity(0.05))
             .cornerRadius(8)
+
+        case .context(_, let app, let window, _):
+            HStack(spacing: 4) {
+                if !app.isEmpty {
+                    HStack(spacing: 3) {
+                        Image(systemName: "app.fill").font(.system(size: 8))
+                        Text(app).font(.system(size: 10, weight: .medium)).lineLimit(1)
+                    }
+                    .foregroundColor(.orange)
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .background(Color.orange.opacity(0.12))
+                    .clipShape(Capsule())
+                }
+                if !window.isEmpty {
+                    HStack(spacing: 3) {
+                        Image(systemName: "macwindow").font(.system(size: 8))
+                        Text(window).font(.system(size: 10, weight: .medium)).lineLimit(1)
+                    }
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .background(Color.blue.opacity(0.10))
+                    .clipShape(Capsule())
+                }
+                Spacer()
+            }
+
+        case .attachment(_, _, let name, let size, _):
+            HStack(spacing: 3) {
+                Image(systemName: ThreadMessage.iconForFile(name)).font(.system(size: 9))
+                Text(name).font(.system(size: 10, weight: .medium)).lineLimit(1)
+                Text("· \(ThreadMessage.formatSize(size))")
+                    .font(.system(size: 9)).foregroundColor(.secondary)
+            }
+            .foregroundColor(.purple)
+            .padding(.horizontal, 6).padding(.vertical, 3)
+            .background(Color.purple.opacity(0.10))
+            .clipShape(Capsule())
         }
     }
 

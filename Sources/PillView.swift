@@ -115,7 +115,6 @@ struct SidebarView: View {
     @State private var micOn = false
     @State private var analysisOn = false
     @State private var codeOn = false
-    @State private var cameraOn = false
     @State private var screenShareOn = false
 
     var body: some View {
@@ -479,13 +478,17 @@ struct SidebarView: View {
     private var dock: some View {
         HStack(spacing: 0) {
             if appState.sessionActive {
-                dockBtn("pause.fill", on: true, c: Color(red: 0.95, green: 0.75, blue: 0.1)) { appState.toggleSession() }
-                dockBtn("checkmark.circle.fill", on: true, c: Color(red: 0.92, green: 0.26, blue: 0.24)) { appState.endSession() }
+                if appState.sessionPaused {
+                    dockBtn("play.fill", on: true, c: Color(red: 0.2, green: 0.78, blue: 0.44)) { appState.togglePause() }
+                } else {
+                    dockBtn("pause.fill", on: true, c: Color(red: 0.95, green: 0.75, blue: 0.1)) { appState.togglePause() }
+                }
+                dockBtn("stop.fill", on: true, c: Color(red: 0.92, green: 0.26, blue: 0.24)) { appState.endSession() }
             } else {
                 dockBtn("play.fill", on: false, c: Color(red: 0.2, green: 0.78, blue: 0.44)) { appState.toggleSession() }
             }
             Rectangle().fill(Ap.dockSep).frame(width: 1, height: 20)
-            dockBtn(cameraOn ? "camera.fill" : "camera.fill", on: cameraOn, c: Color(red: 0.0, green: 0.78, blue: 0.9)) { cameraOn.toggle() }
+            dockBtn("camera.fill", on: false, c: Color(red: 0.0, green: 0.78, blue: 0.9)) { appState.addScreenshotToThread() }
             Rectangle().fill(Ap.dockSep).frame(width: 1, height: 20)
             dockBtn(screenShareOn ? "tv.fill" : "tv", on: screenShareOn, c: Color(red: 0.0, green: 0.78, blue: 0.9)) { screenShareOn.toggle() }
         }.frame(height: 38).padding(.horizontal, 12).padding(.bottom, 6)

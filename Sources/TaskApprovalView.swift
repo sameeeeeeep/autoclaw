@@ -131,7 +131,7 @@ struct ThreadToastView: View {
         case .clipboard(let id, let content, let app, let window, _):
             clipboardBubble(id: id, content: content, app: app, window: window)
         case .screenshot(_, let path, _):
-            screenshotBubble(path: path)
+            screenshotChip(path: path)
         case .userMessage(_, let text, _):
             userMessageBubble(text: text)
         case .haiku(_, let suggestion, _):
@@ -140,6 +140,10 @@ struct ThreadToastView: View {
             executionCard(output: output)
         case .error(_, let message, _):
             errorCard(message: message)
+        case .context(_, let app, let window, _):
+            contextChips(app: app, window: window)
+        case .attachment(_, _, let name, let size, _):
+            attachmentChip(name: name, size: size)
         }
     }
 
@@ -191,28 +195,81 @@ struct ThreadToastView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private func screenshotBubble(path: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "camera.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(.green)
+    private func contextChips(app: String, window: String) -> some View {
+        HStack(spacing: 4) {
+            // App chip
+            if !app.isEmpty {
+                HStack(spacing: 3) {
+                    Image(systemName: "app.fill")
+                        .font(.system(size: 7))
+                    Text(app)
+                        .font(.system(size: 9, weight: .medium))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.orange.opacity(0.12))
+                .clipShape(Capsule())
+            }
 
-            if let nsImage = NSImage(contentsOfFile: path) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxHeight: 80)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            } else {
-                Text("Screenshot captured")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+            // Window chip
+            if !window.isEmpty {
+                HStack(spacing: 3) {
+                    Image(systemName: "macwindow")
+                        .font(.system(size: 7))
+                    Text(window)
+                        .font(.system(size: 9, weight: .medium))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(.blue)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.blue.opacity(0.10))
+                .clipShape(Capsule())
+            }
+
+            Spacer()
+        }
+    }
+
+    private func screenshotChip(path: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "camera.fill")
+                .font(.system(size: 7))
+            Text("Screenshot")
+                .font(.system(size: 9, weight: .medium))
+                .lineLimit(1)
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+               let size = attrs[.size] as? Int64 {
+                Text("· \(ThreadMessage.formatSize(size))")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.green.opacity(0.7))
             }
         }
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.green.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .foregroundStyle(.green)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Color.green.opacity(0.12))
+        .clipShape(Capsule())
+    }
+
+    private func attachmentChip(name: String, size: Int64) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: ThreadMessage.iconForFile(name))
+                .font(.system(size: 7))
+            Text(name)
+                .font(.system(size: 9, weight: .medium))
+                .lineLimit(1)
+            Text("· \(ThreadMessage.formatSize(size))")
+                .font(.system(size: 8))
+                .foregroundStyle(.purple.opacity(0.7))
+        }
+        .foregroundStyle(.purple)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Color.purple.opacity(0.10))
+        .clipShape(Capsule())
     }
 
     private func userMessageBubble(text: String) -> some View {
@@ -491,7 +548,7 @@ struct ThreadToastView: View {
     private var hasContext: Bool {
         appState.threadMessages.contains { msg in
             switch msg {
-            case .clipboard, .screenshot: return true
+            case .clipboard, .screenshot, .attachment: return true
             default: return false
             }
         }

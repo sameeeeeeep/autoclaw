@@ -41,12 +41,9 @@ final class PillWindow: NSPanel {
         )
 
         let view = SidebarView(appState: appState, collapseLevel: binding)
-        let hosting = NSHostingView(rootView: AnyView(view))
+        let hosting = TransparentHostingView(rootView: AnyView(view))
         hosting.frame = contentView?.bounds ?? .zero
         hosting.autoresizingMask = [.width, .height]
-        hosting.wantsLayer = true
-        hosting.layer?.backgroundColor = CGColor.clear
-        hosting.layer?.isOpaque = false
         contentView = hosting
         hostingView = hosting
 
@@ -126,4 +123,36 @@ final class PillWindow: NSPanel {
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+}
+
+// MARK: - Transparent Hosting View
+
+/// NSHostingView subclass that strips the default opaque background
+/// so the rounded-corner clip in SwiftUI doesn't show a grey rectangle behind it.
+private final class TransparentHostingView<Content: View>: NSHostingView<Content> {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        stripBackground()
+    }
+
+    override func layout() {
+        super.layout()
+        stripBackground()
+    }
+
+    private func stripBackground() {
+        walk(self)
+    }
+
+    private func walk(_ v: NSView) {
+        // The internal background view's class name contains "Background"
+        let className = String(describing: type(of: v))
+        if className.contains("Background") || className.contains("background") {
+            v.isHidden = true
+        }
+        v.wantsLayer = true
+        v.layer?.backgroundColor = CGColor.clear
+        v.layer?.isOpaque = false
+        for sub in v.subviews { walk(sub) }
+    }
 }
