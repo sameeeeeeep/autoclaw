@@ -60,9 +60,7 @@ struct ThreadToastView: View {
 
     private var threadHeader: some View {
         HStack(alignment: .center, spacing: 6) {
-            Image(systemName: "bolt.fill")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.cyan)
+            LogoImage(size: 14)
 
             Text("autoclaw")
                 .font(.system(size: 11, weight: .bold, design: .monospaced))

@@ -18,7 +18,6 @@ final class AppState: ObservableObject {
     @Published var selectedProject: Project?
     @Published var needsProjectSelection = false
     @Published var currentSessionId: String?
-    @Published var sessionScreenshotPath: String?
     @Published var currentThread: SessionThread?
 
     // MARK: - Thread (the chat thread in the toast)
@@ -98,7 +97,6 @@ final class AppState: ObservableObject {
         }
 
         print("[Autoclaw] Session started: \(currentSessionId ?? "?")")
-        captureSessionScreenshot()
     }
 
     /// Resume an existing session thread
@@ -122,7 +120,6 @@ final class AppState: ObservableObject {
 
         sessionStore.updateThread(id: thread.id)
         print("[Autoclaw] Session resumed: \(currentSessionId ?? "?") — \(thread.title)")
-        captureSessionScreenshot()
     }
 
     func endSession() {
@@ -141,84 +138,7 @@ final class AppState: ObservableObject {
         showThread = false
         statusLine = "Ready"
 
-        if let path = sessionScreenshotPath {
-            try? FileManager.default.removeItem(atPath: path)
-        }
-        sessionScreenshotPath = nil
-
         print("[Autoclaw] Session ended: \(ended ?? "?")")
-    }
-
-    // MARK: - Screenshot Capture
-
-    private func captureSessionScreenshot() {
-        statusLine = "Capturing screen..."
-
-        // Use nominalResolution (1x) instead of bestResolution (retina) to keep image small
-        guard let cgImage = CGWindowListCreateImage(
-            CGRect.null,
-            .optionOnScreenOnly,
-            kCGNullWindowID,
-            [.nominalResolution]
-        ) else {
-            print("[Autoclaw] Failed to capture session screenshot")
-            statusLine = "Listening..."
-            return
-        }
-
-        // Resize to max 1024px wide for API size limits
-        let srcW = CGFloat(cgImage.width)
-        let srcH = CGFloat(cgImage.height)
-        let maxW: CGFloat = 1024
-        let scale = srcW > maxW ? maxW / srcW : 1.0
-        let dstW = Int(srcW * scale)
-        let dstH = Int(srcH * scale)
-
-        let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: dstW, height: dstH))
-
-        guard let resized = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: dstW,
-            pixelsHigh: dstH,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        ) else {
-            print("[Autoclaw] Failed to create bitmap for screenshot resize")
-            statusLine = "Listening..."
-            return
-        }
-
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: resized)
-        nsImage.draw(in: NSRect(x: 0, y: 0, width: dstW, height: dstH))
-        NSGraphicsContext.restoreGraphicsState()
-
-        // Use JPEG at 60% quality — much smaller than PNG for photos/screenshots
-        guard let jpegData = resized.representation(using: .jpeg, properties: [.compressionFactor: 0.6]) else {
-            print("[Autoclaw] Failed to encode screenshot as JPEG")
-            statusLine = "Listening..."
-            return
-        }
-
-        let tmpDir = NSTemporaryDirectory()
-        let filename = "autoclaw_session_\(currentSessionId ?? "unknown").jpg"
-        let path = (tmpDir as NSString).appendingPathComponent(filename)
-
-        do {
-            try jpegData.write(to: URL(fileURLWithPath: path))
-            sessionScreenshotPath = path
-            let sizeKB = jpegData.count / 1024
-            print("[Autoclaw] Session screenshot saved: \(path) (\(sizeKB)KB, \(dstW)x\(dstH))")
-            statusLine = "Listening..."
-        } catch {
-            print("[Autoclaw] Failed to write screenshot: \(error)")
-            statusLine = "Listening..."
-        }
     }
 
     // MARK: - Clipboard -> Thread (no longer auto-deduces)

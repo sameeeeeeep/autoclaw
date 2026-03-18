@@ -29,6 +29,8 @@ $(MACOS_DIR)/$(APP_NAME): $(SOURCES) Info.plist
 	@plutil -replace CFBundleExecutable -string "$(APP_NAME)" "$(CONTENTS)/Info.plist"
 	@plutil -replace CFBundleIdentifier -string "$(BUNDLE_ID)" "$(CONTENTS)/Info.plist"
 	@if [ -f Resources/AppIcon.icns ]; then cp Resources/AppIcon.icns "$(RESOURCES)/"; fi
+	@cp -f Resources/menubar_icon.png Resources/menubar_icon@2x.png Resources/logo_40.png "$(RESOURCES)/" 2>/dev/null || true
+	@cp -f Resources/freepik__remove-background__60858.png "$(RESOURCES)/autoclaw_logo.png" 2>/dev/null || true
 	@xattr -cr "$(APP_BUNDLE)" 2>/dev/null || true
 	@codesign --force --sign - --entitlements Autoclaw.entitlements "$(APP_BUNDLE)"
 	@echo "Built $(APP_BUNDLE)"

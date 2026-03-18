@@ -140,7 +140,7 @@ struct SidebarView: View {
 
     private var iconView: some View {
         ZStack {
-            Image(systemName: "bolt.fill").font(.system(size: 16, weight: .bold)).foregroundColor(.white)
+            LogoImage(size: 22)
         }
         .contentShape(Rectangle())
         .onTapGesture { withAnimation { collapseLevel = collapseLevel.prev() } }
@@ -228,7 +228,7 @@ struct SidebarView: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .fill(LinearGradient(colors: [Color(red: 0.15, green: 0.15, blue: 0.22), Color(red: 0.08, green: 0.08, blue: 0.14)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    Image(systemName: "bolt.fill").font(.system(size: 11, weight: .bold)).foregroundColor(.white)
+                    LogoImage(size: 16)
                 }.frame(width: 24, height: 24)
                 Text("autoclaw").font(.system(size: 12, weight: .semibold)).foregroundColor(Ap.textPrimary).kerning(-0.4)
             }

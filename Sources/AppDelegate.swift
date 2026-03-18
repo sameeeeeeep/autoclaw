@@ -29,7 +29,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Autoclaw")
+            if let logoPath = Bundle.main.path(forResource: "menubar_icon", ofType: "png"),
+               let img = NSImage(contentsOfFile: logoPath) {
+                img.size = NSSize(width: 18, height: 18)
+                img.isTemplate = false  // keep original colors
+                button.image = img
+            } else {
+                button.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Autoclaw")
+            }
             button.action = #selector(statusItemClicked)
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])

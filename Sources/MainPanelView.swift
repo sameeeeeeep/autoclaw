@@ -120,10 +120,8 @@ struct HomeView: View {
             if !appState.sessionActive {
                 Spacer()
                 VStack(spacing: 12) {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 40))
-                        .foregroundColor(.secondary)
-                    Text("Press Fn or click Start Session")
+                    LogoImage(size: 48)
+                    Text("Double-tap Right ⌥ or click Start Session")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.secondary)
                     Text("Then copy anything to your clipboard — Autoclaw will figure out what to do.\nYou can select a project before or after copying.")
