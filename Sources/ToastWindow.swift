@@ -7,13 +7,11 @@ final class ToastWindow: NSPanel {
     init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 300, height: 120),
-            styleMask: [.titled, .nonactivatingPanel, .fullSizeContentView],
+            styleMask: [.nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
 
-        titlebarAppearsTransparent = true
-        titleVisibility = .hidden
         isFloatingPanel = true
         level = .floating
         isOpaque = false

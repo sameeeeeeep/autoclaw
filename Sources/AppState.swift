@@ -58,9 +58,23 @@ final class AppState: ObservableObject {
     @Published var currentSessionId: String?
     @Published var currentThread: SessionThread?
 
+    // MARK: - Request Mode
+    @Published var requestMode: RequestMode = .task
+
+    func cycleRequestMode() {
+        let all = RequestMode.allCases
+        guard let idx = all.firstIndex(of: requestMode) else { return }
+        let next = all[(all.distance(from: all.startIndex, to: idx) + 1) % all.count]
+        requestMode = next
+        print("[Autoclaw] Request mode → \(next.rawValue)")
+    }
+
     // MARK: - Thread (the chat thread in the toast)
     @Published var threadMessages: [ThreadMessage] = []
     @Published var showThread = false
+
+    // MARK: - Panel Navigation
+    @Published var viewingThread: SessionThread?  // thread selected in Threads tab for detail view
 
     // MARK: - Task Flow
     @Published var currentSuggestion: TaskSuggestion?
@@ -225,6 +239,9 @@ final class AppState: ObservableObject {
         print("[Autoclaw] Session resumed: \(currentSessionId ?? "?") — \(thread.title)")
     }
 
+    /// The thread from the most recently ended session, kept for resume
+    @Published var lastEndedThread: SessionThread?
+
     func endSession() {
         let ended = currentSessionId
         sessionActive = false
@@ -237,12 +254,29 @@ final class AppState: ObservableObject {
         pendingClarification = nil
         needsProjectSelection = false
         currentSessionId = nil
+
+        // Keep thread + messages visible so the toast shows "session ended" state
+        lastEndedThread = currentThread
         currentThread = nil
-        threadMessages = []
-        showThread = false
+        // Don't clear threadMessages or showThread — let the toast stay with resume/dismiss
         statusLine = "Ready"
 
         print("[Autoclaw] Session ended: \(ended ?? "?")")
+    }
+
+    /// Dismiss the ended-session toast completely
+    func dismissEndedSession() {
+        lastEndedThread = nil
+        threadMessages = []
+        showThread = false
+    }
+
+    /// Resume from the ended session
+    func resumeEndedSession() {
+        guard let thread = lastEndedThread else { return }
+        lastEndedThread = nil
+        resumeSession(thread: thread)
+        showThread = true
     }
 
     // MARK: - Clipboard -> Thread (no longer auto-deduces)
@@ -520,15 +554,24 @@ final class AppState: ObservableObject {
         directExecute()
     }
 
-    /// Build prompt from thread context and send directly to Claude Code
+    // MARK: - Skill-Based Mode Routing
+
+    /// Maps each request mode to a Claude Code skill name (in ~/.claude/skills/)
+    private func skillName(for mode: RequestMode) -> String {
+        switch mode {
+        case .question:    return "autoclaw-question"
+        case .task:        return "autoclaw-task"
+        case .addToTasks:  return "autoclaw-add-to-tasks"
+        case .analyze:     return "autoclaw-analyze"
+        }
+    }
+
+    /// Build prompt from thread context and send directly to Claude Code.
+    /// Invokes the appropriate skill via `/skill-name` prefix.
     func directExecute() {
         guard let project = selectedProject else { return }
 
         // Gather context from thread
-        var sections: [String] = []
-
-        sections.append("You are an AI assistant. The user has provided the following context and instructions. Complete the task thoroughly.")
-
         var clipboardEntries: [ClipboardEntry] = []
         var userMessages: [String] = []
         var attachmentPaths: [String] = []
@@ -548,37 +591,35 @@ final class AppState: ObservableObject {
 
         guard !clipboardEntries.isEmpty || !userMessages.isEmpty || !attachmentPaths.isEmpty else { return }
 
+        // Build context sections (skill handles the behavior rules)
+        var contextParts: [String] = []
+
         if !clipboardEntries.isEmpty {
-            sections.append("## Clipboard Context")
+            contextParts.append("## Clipboard Context")
             for (i, entry) in clipboardEntries.enumerated() {
-                sections.append("### Capture \(i + 1) (from \(entry.app) — \(entry.window))\n```\n\(entry.content)\n```")
+                contextParts.append("### Capture \(i + 1) (from \(entry.app) — \(entry.window))\n```\n\(entry.content)\n```")
             }
         }
 
         if !userMessages.isEmpty {
-            sections.append("## User Instructions")
+            contextParts.append("## User Input")
             for msg in userMessages {
-                sections.append("- \"\(msg)\"")
+                contextParts.append("- \"\(msg)\"")
             }
         }
 
         if !attachmentPaths.isEmpty {
-            sections.append("## Attached Files")
+            contextParts.append("## Attached Files")
             for path in attachmentPaths {
-                sections.append("- \(path)")
+                contextParts.append("- \(path)")
             }
         }
 
-        sections.append("""
-        ## Instructions
-        - Execute the task completely — don't just describe what to do, actually do it.
-        - Use all available tools: edit files, run commands, search the web, create issues, etc.
-        - If this involves writing a reply or document, produce the final output.
-        - If this involves code changes, make the actual edits.
-        - Be thorough but concise in your output.
-        """)
+        let context = contextParts.joined(separator: "\n\n")
 
-        let prompt = sections.joined(separator: "\n\n")
+        // Invoke the skill: /autoclaw-question <context>
+        let skill = skillName(for: requestMode)
+        let prompt = "/\(skill) \(context)"
 
         isExecuting = true
         executionOutput = ""

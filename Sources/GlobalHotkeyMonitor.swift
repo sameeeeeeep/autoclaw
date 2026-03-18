@@ -20,6 +20,7 @@ final class GlobalHotkeyMonitor {
     private var onPause: () -> Void
     private var onEnd: () -> Void
     private var onScreenshot: () -> Void
+    private var onCycleMode: () -> Void
 
     // Fn tracking
     private var fnDown = false
@@ -37,12 +38,14 @@ final class GlobalHotkeyMonitor {
     private var lastPauseTime: CFAbsoluteTime = 0
     private var lastEndTime: CFAbsoluteTime = 0
     private var lastScreenshotTime: CFAbsoluteTime = 0
+    private var lastCycleModeTime: CFAbsoluteTime = 0
 
-    init(onToggle: @escaping () -> Void, onPause: @escaping () -> Void, onEnd: @escaping () -> Void, onScreenshot: @escaping () -> Void = {}) {
+    init(onToggle: @escaping () -> Void, onPause: @escaping () -> Void, onEnd: @escaping () -> Void, onScreenshot: @escaping () -> Void = {}, onCycleMode: @escaping () -> Void = {}) {
         self.onToggle = onToggle
         self.onPause = onPause
         self.onEnd = onEnd
         self.onScreenshot = onScreenshot
+        self.onCycleMode = onCycleMode
     }
 
     static func debugLog(_ msg: String) {
@@ -183,6 +186,11 @@ final class GlobalHotkeyMonitor {
             leftOptionConsumed = true
             fireScreenshot(source: "⌥+Z (CGEvent)")
         }
+        // Option + X (keyCode 7) → cycle request mode
+        if keyCode == 7 && flags.contains(.maskAlternate) {
+            leftOptionConsumed = true
+            fireCycleMode(source: "⌥+X (CGEvent)")
+        }
     }
 
     // MARK: - NSEvent handlers
@@ -236,6 +244,11 @@ final class GlobalHotkeyMonitor {
             leftOptionConsumed = true
             fireScreenshot(source: "⌥+Z (NSEvent)")
         }
+        // Option + X (keyCode 7) → cycle request mode
+        if event.keyCode == 7 && event.modifierFlags.contains(.option) {
+            leftOptionConsumed = true
+            fireCycleMode(source: "⌥+X (NSEvent)")
+        }
     }
 
     // MARK: - Debounced actions
@@ -270,6 +283,14 @@ final class GlobalHotkeyMonitor {
         lastScreenshotTime = now
         logger.info("Screenshot hotkey (\(source, privacy: .public))")
         DispatchQueue.main.async { self.onScreenshot() }
+    }
+
+    private func fireCycleMode(source: String) {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now - lastCycleModeTime > 0.2 else { return }
+        lastCycleModeTime = now
+        logger.info("Cycle mode hotkey (\(source, privacy: .public))")
+        DispatchQueue.main.async { self.onCycleMode() }
     }
 
     func stop() {

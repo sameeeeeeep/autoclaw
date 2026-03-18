@@ -1,5 +1,43 @@
 import SwiftUI
 
+// MARK: - Request Mode
+
+enum RequestMode: String, CaseIterable, Identifiable {
+    case task = "Task"
+    case addToTasks = "Add to Tasks"
+    case question = "Question"
+    case analyze = "Analyze"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .task:       return "play.fill"
+        case .addToTasks: return "plus.circle"
+        case .question:   return "questionmark.bubble"
+        case .analyze:    return "sparkle.magnifyingglass"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .task:       return .green
+        case .addToTasks: return .orange
+        case .question:   return .purple
+        case .analyze:    return .cyan
+        }
+    }
+
+    var placeholder: String {
+        switch self {
+        case .task:       return "Describe the task…"
+        case .addToTasks: return "What should be added?"
+        case .question:   return "Ask a question…"
+        case .analyze:    return "What should I analyze?"
+        }
+    }
+}
+
 // MARK: - Thread Toast View (the session chat thread)
 
 struct ThreadToastView: View {
@@ -7,16 +45,41 @@ struct ThreadToastView: View {
     var onApprove: () -> Void
     var onDirectExecute: () -> Void
     var onDismiss: () -> Void
+    var onResume: (() -> Void)?
 
     @State private var inputText = ""
     @State private var expandedMessages: Set<UUID> = []
+
+    /// Whether the toast is showing a "session ended" state
+    private var isSessionEnded: Bool {
+        !appState.sessionActive && !appState.threadMessages.isEmpty
+    }
+
+    private var glowState: GlowState {
+        if isSessionEnded { return .off }
+        if appState.isExecuting || appState.isDeducing { return .thinking }
+        if appState.sessionActive && appState.sessionPaused { return .enabled }
+        if appState.sessionActive { return .enabled }
+        return .off
+    }
+
+    private var glowColor: Color {
+        if appState.isExecuting || appState.isDeducing { return .purple }
+        if appState.sessionActive && appState.sessionPaused { return .white }
+        if appState.sessionActive {
+            // Check if last message was successful execution
+            if case .execution = appState.threadMessages.last { return .cyan }
+            return .green
+        }
+        return .clear
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             // Header
             threadHeader
 
-            Divider().opacity(0.3)
+            Divider().opacity(0.15)
 
             // Thread messages
             ScrollViewReader { proxy in
@@ -35,39 +98,62 @@ struct ThreadToastView: View {
                         if appState.isDeducing {
                             thinkingIndicator
                         }
+
+                        // Live execution output
+                        if appState.isExecuting || (!appState.executionOutput.isEmpty && !hasExecutionMessage) {
+                            liveExecutionView
+                                .id("live-exec")
+                        }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
                 }
                 .frame(maxHeight: 340)
                 .onChange(of: appState.threadMessages.count) { _ in
-                    if let last = appState.threadMessages.last {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo(last.id, anchor: .bottom)
-                        }
+                    scrollToBottom(proxy)
+                }
+                .onChange(of: appState.executionOutput) { _ in
+                    if appState.isExecuting {
+                        scrollToBottom(proxy)
                     }
                 }
             }
 
-            Divider().opacity(0.3)
+            Divider().opacity(0.15)
 
-            // Input bar
-            inputBar
+            // Input bar or session-ended bar
+            if isSessionEnded {
+                sessionEndedBar
+            } else {
+                inputBar
+            }
         }
         .frame(width: 320)
+        .intelligenceGlow(color: glowColor, cornerRadius: 12, state: glowState)
+    }
+
+    // MARK: - Session State
+
+    private var sessionStateColor: Color {
+        if isSessionEnded { return .secondary }
+        if appState.isExecuting || appState.isDeducing { return .purple }
+        if appState.sessionPaused { return .white.opacity(0.6) }
+        if case .execution = appState.threadMessages.last { return .cyan }
+        return .green
     }
 
     // MARK: - Header
 
     private var threadHeader: some View {
         VStack(spacing: 0) {
-            // Top row: logo + message count + close
-            HStack(alignment: .center, spacing: 6) {
-                LogoImage(size: 14)
+            // Top row: menubar icon + title + message count + close
+            HStack(alignment: .center, spacing: 5) {
+                // Menubar icon — tinted to match session state
+                MenuBarIconView(color: sessionStateColor, size: 14)
 
                 Text("autoclaw")
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(isSessionEnded ? .secondary : .primary)
 
                 Spacer()
 
@@ -92,21 +178,18 @@ struct ThreadToastView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
             .padding(.top, 8)
             .padding(.bottom, 4)
 
-            // Bottom row: model picker + project picker
-            HStack(spacing: 6) {
-                // Model picker
+            // Bottom row: model picker + project picker + request mode
+            HStack(spacing: 4) {
                 modelPicker
-
-                // Project picker
                 projectPicker
-
                 Spacer()
+                requestModeCapsule
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
             .padding(.bottom, 6)
         }
     }
@@ -600,7 +683,79 @@ struct ThreadToastView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
+    /// Whether the thread already has a .execution message (so we don't show live + final)
+    private var hasExecutionMessage: Bool {
+        appState.threadMessages.contains { if case .execution = $0 { return true }; return false }
+    }
+
+    private var liveExecutionView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                if appState.isExecuting {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .scaleEffect(0.7)
+                    Text("Executing…")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.orange)
+                } else {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.green)
+                    Text("Done")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.green)
+                }
+            }
+
+            if !appState.executionOutput.isEmpty {
+                Text(String(appState.executionOutput.suffix(300)))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(6)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background((appState.isExecuting ? Color.orange : Color.green).opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        if appState.isExecuting {
+            withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("live-exec", anchor: .bottom) }
+        } else if let last = appState.threadMessages.last {
+            withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(last.id, anchor: .bottom) }
+        }
+    }
+
     // MARK: - Input Bar
+
+    // MARK: - Request Mode Capsule (in header, clickable to cycle)
+
+    private var requestModeCapsule: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                appState.cycleRequestMode()
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: appState.requestMode.icon)
+                    .font(.system(size: 7))
+                Text(appState.requestMode.rawValue)
+                    .font(.system(size: 9, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(appState.requestMode.color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(appState.requestMode.color.opacity(0.12))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Cycle mode (⌥X)")
+    }
 
     private var inputBar: some View {
         HStack(spacing: 6) {
@@ -609,49 +764,59 @@ struct ThreadToastView: View {
                 appState.addScreenshotToThread()
             } label: {
                 Image(systemName: "camera.fill")
-                    .font(.system(size: 12))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help("Capture screenshot")
+            .help("Capture screenshot (⌥Z)")
 
-            // Text input
-            TextField("Message… (⏎ execute, ⇧⏎ analyze)", text: $inputText)
+            // Text input — placeholder matches the current mode
+            TextField(appState.requestMode.placeholder, text: $inputText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 11))
                 .onSubmit {
-                    if NSEvent.modifierFlags.contains(.shift) {
-                        submitInput()
-                    } else {
-                        submitDirectExecute()
-                    }
+                    submitForMode()
                 }
 
-            // Analyze button (shift+enter)
+            // Submit button — icon and color match the mode
             Button {
-                submitInput()
+                submitForMode()
             } label: {
-                Image(systemName: "brain.head.profile")
-                    .font(.system(size: 16))
-                    .foregroundStyle(canSend ? Color.blue : Color.gray.opacity(0.4))
+                Image(systemName: appState.requestMode.icon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(canSend ? appState.requestMode.color : Color.gray.opacity(0.4))
             }
             .buttonStyle(.plain)
             .disabled(!canSend)
-            .help("Analyze first (Shift+Enter)")
-
-            // Direct execute button (primary — Enter)
-            Button {
-                submitDirectExecute()
-            } label: {
-                Image(systemName: "bolt.circle.fill")
-                    .font(.system(size: 18))
-                    .foregroundStyle(canSend ? Color.orange : Color.gray.opacity(0.4))
-            }
-            .buttonStyle(.plain)
-            .disabled(!canSend)
-            .help("Execute directly (Enter)")
+            .help("Send (\(appState.requestMode.rawValue))")
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - Session Ended Bar
+
+    private var sessionEndedBar: some View {
+        HStack(spacing: 8) {
+            Text("Session ended")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            if let resume = onResume {
+                Button {
+                    resume()
+                } label: {
+                    Label("Resume", systemImage: "arrow.counterclockwise")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.mini)
+                .tint(.green)
+            }
+        }
+        .padding(.horizontal, 10)
         .padding(.vertical, 8)
     }
 
@@ -668,24 +833,35 @@ struct ThreadToastView: View {
         }
     }
 
-    private func submitInput() {
+    private func submitForMode() {
         let text = inputText.trimmingCharacters(in: .whitespaces)
         inputText = ""
-        if text.isEmpty {
-            appState.sendToHaiku()
-        } else {
-            appState.sendMessage(text)
-        }
-    }
 
-    private func submitDirectExecute() {
-        let text = inputText.trimmingCharacters(in: .whitespaces)
-        inputText = ""
-        onDirectExecute()
-        if text.isEmpty {
-            appState.directExecute()
-        } else {
-            appState.directExecuteMessage(text)
+        switch appState.requestMode {
+        case .task:
+            // Direct execute — skip deduction
+            onDirectExecute()
+            if text.isEmpty { appState.directExecute() }
+            else { appState.directExecuteMessage(text) }
+
+        case .addToTasks:
+            // Wrap as a "create ClickUp task" instruction
+            let taskText = text.isEmpty ? "Create a task from the clipboard context" : text
+            let prompt = "Create a ClickUp task for this: \(taskText)"
+            onDirectExecute()
+            appState.directExecuteMessage(prompt)
+
+        case .question:
+            // Ask a question about the project — direct execute with question framing
+            let questionText = text.isEmpty ? "Answer the question based on the context" : text
+            let prompt = "Answer this question about the project: \(questionText)"
+            onDirectExecute()
+            appState.directExecuteMessage(prompt)
+
+        case .analyze:
+            // Deduce first via Haiku
+            if text.isEmpty { appState.sendToHaiku() }
+            else { appState.sendMessage(text) }
         }
     }
 }

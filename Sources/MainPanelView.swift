@@ -19,49 +19,102 @@ struct MainPanelView: View {
     @State private var selectedTab: PanelTab = .home
 
     var body: some View {
-        HSplitView {
+        HStack(spacing: 0) {
             // Sidebar
-            VStack(spacing: 4) {
+            sidebar
+            Divider()
+            // Content
+            content
+        }
+        .frame(minWidth: 640, minHeight: 440)
+        .background(.background)
+    }
+
+    // MARK: - Sidebar
+
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            // App header
+            HStack(spacing: 8) {
+                LogoImage(size: 20)
+                Text("autoclaw")
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+
+            Divider().padding(.horizontal, 12)
+
+            // Nav items
+            VStack(spacing: 2) {
                 ForEach(PanelTab.allCases, id: \.self) { tab in
                     Button {
                         selectedTab = tab
+                        if tab != .threads { appState.viewingThread = nil }
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: tab.icon)
-                                .frame(width: 20)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(selectedTab == tab ? .primary : .secondary)
+                                .frame(width: 18)
                             Text(tab.rawValue)
-                                .font(.system(size: 12))
+                                .font(.system(size: 12, weight: selectedTab == tab ? .semibold : .regular))
+                                .foregroundStyle(selectedTab == tab ? .primary : .secondary)
                             Spacer()
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
                         .background(
                             selectedTab == tab
-                                ? Color.accentColor.opacity(0.15)
+                                ? Color.accentColor.opacity(0.12)
                                 : Color.clear
                         )
-                        .cornerRadius(6)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
                 }
-                Spacer()
             }
-            .frame(width: 140)
-            .padding(10)
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
 
-            // Content
-            Group {
-                switch selectedTab {
-                case .home:
-                    HomeView(appState: appState)
-                case .threads:
-                    ThreadsView(appState: appState)
-                case .settings:
-                    SettingsView(appState: appState)
+            Spacer()
+
+            // Session status at bottom
+            if appState.sessionActive {
+                VStack(spacing: 4) {
+                    Divider().padding(.horizontal, 12)
+                    HStack(spacing: 6) {
+                        Circle().fill(Color.green).frame(width: 6, height: 6)
+                        Text("Session active")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.green)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
                 }
             }
         }
-        .frame(minWidth: 600, minHeight: 400)
+        .frame(width: 160)
+    }
+
+    // MARK: - Content
+
+    @ViewBuilder
+    private var content: some View {
+        switch selectedTab {
+        case .home:
+            HomeView(appState: appState)
+        case .threads:
+            if let thread = appState.viewingThread {
+                ThreadDetailView(appState: appState, thread: thread)
+            } else {
+                ThreadsView(appState: appState)
+            }
+        case .settings:
+            SettingsView(appState: appState)
+        }
     }
 }
 
@@ -72,10 +125,10 @@ struct HomeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top bar: session controls + project picker
-            HStack {
+            // Top bar
+            HStack(spacing: 12) {
                 Picker("Project", selection: $appState.selectedProject) {
-                    Text("Select project...").tag(nil as Project?)
+                    Text("Select project…").tag(nil as Project?)
                     ForEach(appState.projectStore.projects) { project in
                         Text(project.name).tag(project as Project?)
                     }
@@ -84,32 +137,25 @@ struct HomeView: View {
 
                 Spacer()
 
-                // Active session indicator
                 if let thread = appState.currentThread {
                     HStack(spacing: 4) {
                         Circle().fill(Color.green).frame(width: 6, height: 6)
                         Text(thread.title)
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(Color.green.opacity(0.1))
-                    .cornerRadius(4)
+                    .background(Color.green.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
-
-                Text("Fn")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Color.gray.opacity(0.2))
-                    .cornerRadius(4)
 
                 Button(appState.sessionActive ? "End Session" : "Start Session") {
                     appState.toggleSession()
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
                 .tint(appState.sessionActive ? .red : .green)
             }
             .padding(16)
@@ -118,96 +164,100 @@ struct HomeView: View {
 
             // Main content area
             if !appState.sessionActive {
-                Spacer()
-                VStack(spacing: 12) {
-                    LogoImage(size: 48)
-                    Text("Double-tap Right ⌥ or click Start Session")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.secondary)
-                    Text("Then copy anything to your clipboard — Autoclaw will figure out what to do.\nYou can select a project before or after copying.")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary.opacity(0.7))
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 340)
-
-                    // Quick resume recent threads
-                    if let project = appState.selectedProject {
-                        let recent = appState.sessionStore.threads(for: project.id).prefix(3)
-                        if !recent.isEmpty {
-                            VStack(spacing: 4) {
-                                Text("Recent sessions")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundColor(.secondary)
-                                    .padding(.top, 8)
-                                ForEach(Array(recent)) { thread in
-                                    Button {
-                                        appState.resumeSession(thread: thread)
-                                    } label: {
-                                        HStack(spacing: 8) {
-                                            Image(systemName: "arrow.counterclockwise")
-                                                .font(.system(size: 10))
-                                                .foregroundColor(.accentColor)
-                                            VStack(alignment: .leading, spacing: 1) {
-                                                Text(thread.title)
-                                                    .font(.system(size: 11, weight: .medium))
-                                                Text(thread.lastActiveAt.formatted(.relative(presentation: .named)))
-                                                    .font(.system(size: 9))
-                                                    .foregroundColor(.secondary)
-                                            }
-                                            Spacer()
-                                            Text("\(thread.taskCount) tasks")
-                                                .font(.system(size: 9, design: .monospaced))
-                                                .foregroundColor(.secondary)
-                                        }
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
-                                        .background(Color.accentColor.opacity(0.06))
-                                        .cornerRadius(6)
-                                        .contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .frame(maxWidth: 320)
-                        }
-                    }
-                }
-                Spacer()
+                idleView
             } else if appState.isExecuting || !appState.executionOutput.isEmpty {
                 ExecutionView(appState: appState)
             } else if !appState.threadMessages.isEmpty {
-                // Show current session thread
                 SessionThreadView(appState: appState)
             } else {
-                Spacer()
-                VStack(spacing: 12) {
-                    Image(systemName: "doc.on.clipboard")
-                        .font(.system(size: 32))
-                        .foregroundColor(.secondary)
-                    Text("Listening for clipboard changes...")
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
+                listeningView
+            }
+        }
+    }
 
-                    if !appState.activeApp.isEmpty {
-                        HStack(spacing: 8) {
-                            Label(appState.activeApp, systemImage: "app.fill")
-                            if !appState.activeWindowTitle.isEmpty {
-                                Text("—")
-                                Text(appState.activeWindowTitle).lineLimit(1)
+    private var idleView: some View {
+        VStack {
+            Spacer()
+            VStack(spacing: 14) {
+                LogoImage(size: 48)
+                Text("Start a session to begin")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text("Copy anything to your clipboard and Autoclaw will figure out what to do.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 320)
+
+                // Recent sessions
+                if let project = appState.selectedProject {
+                    let recent = appState.sessionStore.threads(for: project.id).prefix(3)
+                    if !recent.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Recent")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                                .padding(.top, 4)
+                            ForEach(Array(recent)) { thread in
+                                Button {
+                                    appState.resumeSession(thread: thread)
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "arrow.counterclockwise")
+                                            .font(.system(size: 9))
+                                            .foregroundColor(.accentColor)
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text(thread.title)
+                                                .font(.system(size: 11, weight: .medium))
+                                            Text(thread.lastActiveAt.formatted(.relative(presentation: .named)))
+                                                .font(.system(size: 9))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Text("\(thread.taskCount)")
+                                            .font(.system(size: 9, design: .monospaced))
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(Color.accentColor.opacity(0.04))
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                    }
-
-                    if appState.selectedProject == nil {
-                        Text("No project selected — you'll be prompted to pick one when you copy")
-                            .font(.system(size: 11))
-                            .foregroundColor(.orange)
+                        .frame(maxWidth: 320)
                     }
                 }
-                Spacer()
             }
+            Spacer()
+        }
+    }
+
+    private var listeningView: some View {
+        VStack {
+            Spacer()
+            VStack(spacing: 12) {
+                Image(systemName: "doc.on.clipboard")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.tertiary)
+                Text("Listening for clipboard…")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                if !appState.activeApp.isEmpty {
+                    HStack(spacing: 6) {
+                        Label(appState.activeApp, systemImage: "app.fill")
+                        if !appState.activeWindowTitle.isEmpty {
+                            Text("—").foregroundStyle(.quaternary)
+                            Text(appState.activeWindowTitle).lineLimit(1)
+                        }
+                    }
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                }
+            }
+            Spacer()
         }
     }
 }
@@ -221,11 +271,9 @@ struct ThreadsView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("Session Threads")
+                Text("Sessions")
                     .font(.system(size: 16, weight: .bold))
-
                 Spacer()
-
                 if appState.selectedProject != nil {
                     Picker("Project", selection: $appState.selectedProject) {
                         Text("All projects").tag(nil as Project?)
@@ -240,37 +288,40 @@ struct ThreadsView: View {
 
             Divider()
 
-            // Thread list
             let threads = filteredThreads
             if threads.isEmpty {
                 Spacer()
-                VStack(spacing: 12) {
+                VStack(spacing: 10) {
                     Image(systemName: "bubble.left.and.text.bubble.right")
-                        .font(.system(size: 32))
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 28))
+                        .foregroundStyle(.tertiary)
                     Text("No sessions yet")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.secondary)
-                    Text("Start a session and complete a task to see threads here.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary.opacity(0.7))
+                        .foregroundStyle(.secondary)
                 }
                 Spacer()
             } else {
-                List {
-                    ForEach(threads) { thread in
-                        ThreadRow(
-                            thread: thread,
-                            projectName: projectName(for: thread.projectId),
-                            isActive: appState.currentSessionId == thread.id.uuidString,
-                            onResume: {
-                                appState.resumeSession(thread: thread)
-                            },
-                            onDelete: {
-                                appState.sessionStore.removeThread(id: thread.id)
-                            }
-                        )
+                ScrollView {
+                    LazyVStack(spacing: 1) {
+                        ForEach(threads) { thread in
+                            ThreadRow(
+                                thread: thread,
+                                projectName: projectName(for: thread.projectId),
+                                isActive: appState.currentSessionId == thread.id.uuidString,
+                                onTap: {
+                                    appState.viewingThread = thread
+                                },
+                                onResume: {
+                                    appState.resumeSession(thread: thread)
+                                },
+                                onDelete: {
+                                    appState.sessionStore.removeThread(id: thread.id)
+                                }
+                            )
+                        }
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
                 }
             }
         }
@@ -292,83 +343,171 @@ struct ThreadRow: View {
     let thread: SessionThread
     let projectName: String
     let isActive: Bool
+    var onTap: () -> Void
     var onResume: () -> Void
     var onDelete: () -> Void
 
+    @State private var isHovered = false
+
     var body: some View {
-        HStack(spacing: 12) {
-            // Active indicator
-            Circle()
-                .fill(isActive ? Color.green : Color.clear)
-                .frame(width: 8, height: 8)
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                // State indicator
+                Circle()
+                    .fill(isActive ? Color.green : Color.secondary.opacity(0.2))
+                    .frame(width: 7, height: 7)
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(thread.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(thread.title)
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                            .foregroundStyle(.primary)
 
-                    if isActive {
-                        Text("ACTIVE")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.green)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Color.green.opacity(0.15))
-                            .cornerRadius(3)
+                        if isActive {
+                            Text("ACTIVE")
+                                .font(.system(size: 7, weight: .bold))
+                                .foregroundStyle(.green)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.green.opacity(0.12))
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                        }
+                    }
+
+                    HStack(spacing: 6) {
+                        Text(projectName)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                        Text("·").foregroundStyle(.quaternary)
+                        Text("\(thread.taskCount) tasks")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                        Text("·").foregroundStyle(.quaternary)
+                        Text(thread.lastActiveAt.formatted(.relative(presentation: .named)))
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
                     }
                 }
 
-                HStack(spacing: 8) {
-                    Label(projectName, systemImage: "folder")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
+                Spacer()
 
-                    Text("·")
-                        .foregroundColor(.secondary)
+                if isHovered {
+                    if !isActive {
+                        Button {
+                            onResume()
+                        } label: {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 10))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    }
 
-                    Text("\(thread.taskCount) tasks")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.secondary)
-
-                    Text("·")
-                        .foregroundColor(.secondary)
-
-                    Text(thread.lastActiveAt.formatted(.relative(presentation: .named)))
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
+                    Button(role: .destructive) {
+                        onDelete()
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10))
+                    }
+                    .buttonStyle(.borderless)
                 }
 
-                if let lastTask = thread.lastTaskTitle {
-                    Text("Last: \(lastTask)")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary.opacity(0.6))
-                        .lineLimit(1)
-                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.quaternary)
             }
-
-            Spacer()
-
-            if !isActive {
-                Button {
-                    onResume()
-                } label: {
-                    Label("Resume", systemImage: "arrow.counterclockwise")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-
-            Button(role: .destructive) {
-                onDelete()
-            } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 11))
-            }
-            .buttonStyle(.borderless)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(isHovered ? Color.accentColor.opacity(0.06) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 6)
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Thread Detail View (chat history for a selected session)
+
+struct ThreadDetailView: View {
+    @ObservedObject var appState: AppState
+    let thread: SessionThread
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header with back button
+            HStack(spacing: 10) {
+                Button {
+                    appState.viewingThread = nil
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(thread.title)
+                        .font(.system(size: 14, weight: .bold))
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(thread.startedAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                        Text("·").foregroundStyle(.quaternary)
+                        Text("\(thread.taskCount) tasks")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                Spacer()
+
+                if appState.currentSessionId != thread.id.uuidString {
+                    Button {
+                        appState.resumeSession(thread: thread)
+                    } label: {
+                        Label("Resume", systemImage: "arrow.counterclockwise")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(.green)
+                } else {
+                    HStack(spacing: 4) {
+                        Circle().fill(Color.green).frame(width: 6, height: 6)
+                        Text("Active")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.green)
+                    }
+                }
+            }
+            .padding(16)
+
+            Divider()
+
+            // Messages — show current threadMessages if this is the active session
+            if appState.currentSessionId == thread.id.uuidString && !appState.threadMessages.isEmpty {
+                SessionThreadView(appState: appState)
+            } else {
+                // No persisted messages for past sessions yet
+                Spacer()
+                VStack(spacing: 10) {
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.tertiary)
+                    Text("Session messages aren't persisted yet")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    if let lastTask = thread.lastTaskTitle {
+                        Text("Last task: \(lastTask)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                Spacer()
+            }
+        }
     }
 }
 
@@ -389,14 +528,14 @@ struct SessionThreadView: View {
                     if appState.isDeducing {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text("Analyzing with Haiku…")
+                            Text("Analyzing…")
                                 .font(.system(size: 12))
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                         }
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.cyan.opacity(0.05))
-                        .cornerRadius(8)
+                        .background(Color.cyan.opacity(0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                 }
                 .padding(16)
@@ -415,9 +554,9 @@ struct SessionThreadView: View {
         case .clipboard(_, let content, let app, let window, _):
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Image(systemName: "doc.on.clipboard").font(.system(size: 10)).foregroundColor(.secondary)
-                    if !app.isEmpty { Text(app).font(.system(size: 10)).foregroundColor(.secondary) }
-                    if !window.isEmpty { Text("· \(window)").font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1) }
+                    Image(systemName: "doc.on.clipboard").font(.system(size: 10)).foregroundStyle(.secondary)
+                    if !app.isEmpty { Text(app).font(.system(size: 10)).foregroundStyle(.secondary) }
+                    if !window.isEmpty { Text("· \(window)").font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1) }
                     Spacer()
                     Button {
                         NSPasteboard.general.clearContents()
@@ -426,18 +565,18 @@ struct SessionThreadView: View {
                         Image(systemName: "doc.on.doc").font(.system(size: 10))
                     }
                     .buttonStyle(.borderless)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                 }
                 Text(content)
                     .font(.system(size: 11, design: .monospaced))
                     .textSelection(.enabled)
                     .lineLimit(6)
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.04))
-            .cornerRadius(8)
+            .background(Color.primary.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
 
         case .screenshot(_, let path, _):
             HStack(spacing: 3) {
@@ -446,12 +585,12 @@ struct SessionThreadView: View {
                 if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
                    let size = attrs[.size] as? Int64 {
                     Text("· \(ThreadMessage.formatSize(size))")
-                        .font(.system(size: 9)).foregroundColor(.green.opacity(0.7))
+                        .font(.system(size: 9)).foregroundStyle(.green.opacity(0.7))
                 }
             }
-            .foregroundColor(.green)
+            .foregroundStyle(.green)
             .padding(.horizontal, 6).padding(.vertical, 3)
-            .background(Color.green.opacity(0.12))
+            .background(Color.green.opacity(0.10))
             .clipShape(Capsule())
 
         case .userMessage(_, let text, _):
@@ -460,8 +599,8 @@ struct SessionThreadView: View {
                 Text(text)
                     .font(.system(size: 12))
                     .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(Color.accentColor.opacity(0.15))
-                    .cornerRadius(12)
+                    .background(Color.accentColor.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
                     .textSelection(.enabled)
             }
 
@@ -472,31 +611,31 @@ struct SessionThreadView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label("Executed", systemImage: "checkmark.circle.fill")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.green)
+                    .foregroundStyle(.green)
                 Text(output)
                     .font(.system(size: 11, design: .monospaced))
                     .lineLimit(20)
                     .textSelection(.enabled)
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.green.opacity(0.05))
-            .cornerRadius(8)
+            .background(Color.green.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
 
         case .error(_, let message, _):
             VStack(alignment: .leading, spacing: 6) {
                 Label("Error", systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.red)
-                Text(message).font(.system(size: 11)).foregroundColor(.secondary)
+                    .foregroundStyle(.red)
+                Text(message).font(.system(size: 11)).foregroundStyle(.secondary)
                 Button("Retry") { appState.sendToHaiku() }
                     .buttonStyle(.borderedProminent).tint(.red).controlSize(.small)
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.red.opacity(0.05))
-            .cornerRadius(8)
+            .background(Color.red.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
 
         case .context(_, let app, let window, _):
             HStack(spacing: 4) {
@@ -505,9 +644,9 @@ struct SessionThreadView: View {
                         Image(systemName: "app.fill").font(.system(size: 8))
                         Text(app).font(.system(size: 10, weight: .medium)).lineLimit(1)
                     }
-                    .foregroundColor(.orange)
+                    .foregroundStyle(.orange)
                     .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(Color.orange.opacity(0.12))
+                    .background(Color.orange.opacity(0.10))
                     .clipShape(Capsule())
                 }
                 if !window.isEmpty {
@@ -515,9 +654,9 @@ struct SessionThreadView: View {
                         Image(systemName: "macwindow").font(.system(size: 8))
                         Text(window).font(.system(size: 10, weight: .medium)).lineLimit(1)
                     }
-                    .foregroundColor(.blue)
+                    .foregroundStyle(.blue)
                     .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(Color.blue.opacity(0.10))
+                    .background(Color.blue.opacity(0.08))
                     .clipShape(Capsule())
                 }
                 Spacer()
@@ -528,11 +667,11 @@ struct SessionThreadView: View {
                 Image(systemName: ThreadMessage.iconForFile(name)).font(.system(size: 9))
                 Text(name).font(.system(size: 10, weight: .medium)).lineLimit(1)
                 Text("· \(ThreadMessage.formatSize(size))")
-                    .font(.system(size: 9)).foregroundColor(.secondary)
+                    .font(.system(size: 9)).foregroundStyle(.secondary)
             }
-            .foregroundColor(.purple)
+            .foregroundStyle(.purple)
             .padding(.horizontal, 6).padding(.vertical, 3)
-            .background(Color.purple.opacity(0.10))
+            .background(Color.purple.opacity(0.08))
             .clipShape(Capsule())
         }
     }
@@ -540,9 +679,8 @@ struct SessionThreadView: View {
     @ViewBuilder
     private func panelHaikuCard(_ suggestion: TaskSuggestion) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Title + kind badge
             HStack(spacing: 8) {
-                Image(systemName: "sparkles").foregroundColor(.yellow)
+                Image(systemName: "sparkles").foregroundStyle(.yellow)
                 Text(suggestion.title).font(.system(size: 14, weight: .semibold)).lineLimit(2)
                 Spacer()
                 kindBadge(suggestion.kind)
@@ -554,12 +692,12 @@ struct SessionThreadView: View {
                         Text(skill)
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
                             .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Color.blue.opacity(0.12)).cornerRadius(4)
+                            .background(Color.blue.opacity(0.10)).clipShape(RoundedRectangle(cornerRadius: 4))
                     }
                 }
             }
 
-            Divider()
+            Divider().opacity(0.5)
 
             Text(suggestion.draft)
                 .font(.system(size: 12))
@@ -567,14 +705,13 @@ struct SessionThreadView: View {
                 .lineLimit(suggestion.kind == .execute ? 4 : nil)
 
             if let plan = suggestion.completionPlan {
-                Divider()
-                Text("Plan").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
-                Text(plan).font(.system(size: 11)).foregroundColor(.secondary)
+                Divider().opacity(0.5)
+                Text("Plan").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Text(plan).font(.system(size: 11)).foregroundStyle(.secondary)
             }
 
-            Divider()
+            Divider().opacity(0.5)
 
-            // CTAs based on kind
             HStack {
                 switch suggestion.kind {
                 case .execute:
@@ -599,9 +736,9 @@ struct SessionThreadView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.yellow.opacity(0.04))
-        .cornerRadius(10)
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.yellow.opacity(0.15), lineWidth: 1))
+        .background(Color.yellow.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.yellow.opacity(0.12), lineWidth: 1))
     }
 
     private func kindBadge(_ kind: TaskKind) -> some View {
@@ -614,7 +751,7 @@ struct SessionThreadView: View {
         return Text(label)
             .font(.system(size: 9, weight: .bold, design: .monospaced))
             .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(color.opacity(0.15)).cornerRadius(4)
-            .foregroundColor(color)
+            .background(color.opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 4))
+            .foregroundStyle(color)
     }
 }

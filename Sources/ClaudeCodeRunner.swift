@@ -1,8 +1,52 @@
 import Foundation
 
+// MARK: - Claude Session
+
+/// An interactive streaming session with the Claude CLI.
+/// Wraps the process and pipes for follow-up messages.
+final class ClaudeSession: @unchecked Sendable {
+    let sessionID: String
+    private let process: Process
+    private let stdinPipe: Pipe
+    var isRunning = true
+
+    init(sessionID: String, process: Process, stdinPipe: Pipe) {
+        self.sessionID = sessionID
+        self.process = process
+        self.stdinPipe = stdinPipe
+    }
+
+    /// Send a follow-up message to Claude.
+    func sendMessage(_ text: String) {
+        guard isRunning else { return }
+        let msg: [String: Any] = [
+            "type": "user",
+            "message": [
+                "role": "user",
+                "content": text,
+            ],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: msg),
+              let json = String(data: data, encoding: .utf8) else { return }
+        stdinPipe.fileHandleForWriting.write((json + "\n").data(using: .utf8)!)
+        print("[Autoclaw] ClaudeSession: sent follow-up (\(text.prefix(60))...)")
+    }
+
+    func stop() {
+        guard isRunning else { return }
+        isRunning = false
+        stdinPipe.fileHandleForWriting.closeFile()
+        if process.isRunning { process.terminate() }
+    }
+
+    deinit { stop() }
+}
+
+// MARK: - ClaudeCodeRunner
+
 final class ClaudeCodeRunner: @unchecked Sendable {
 
-    // MARK: - CLI Discovery (same as autoclawd)
+    // MARK: - CLI Discovery
 
     static func findCLI() -> URL? {
         let localBin = FileManager.default.homeDirectoryForCurrentUser
@@ -52,10 +96,11 @@ final class ClaudeCodeRunner: @unchecked Sendable {
         return runInteractiveSession(prompt: prompt, project: project, model: model, sessionId: sessionId)
     }
 
-    // MARK: - Interactive Session (like autoclawd — loads MCP connectors)
+    // MARK: - Interactive Session (ported from autoclawd)
 
     /// Runs Claude Code in interactive mode with stream-json I/O.
-    /// This mode loads all configured MCP servers (ClickUp, etc.) unlike -p/--print mode.
+    /// Uses readabilityHandler for reliable pipe reading (FileHandle.bytes.lines
+    /// doesn't work reliably with Process Pipes on macOS).
     private func runInteractiveSession(
         prompt: String,
         project: Project,
@@ -63,188 +108,278 @@ final class ClaudeCodeRunner: @unchecked Sendable {
         sessionId: String? = nil
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            Task {
-                do {
-                    guard let claudeURL = ClaudeCodeRunner.findCLI() else {
-                        continuation.finish(throwing: AutoclawError.executionError("claude CLI not found"))
+            do {
+                guard let claudeURL = ClaudeCodeRunner.findCLI() else {
+                    continuation.finish(throwing: AutoclawError.executionError("claude CLI not found"))
+                    return
+                }
+
+                let process = Process()
+                process.executableURL = claudeURL
+
+                var args: [String] = [
+                    "--output-format", "stream-json",
+                    "--input-format", "stream-json",
+                    "--verbose",
+                    "--dangerously-skip-permissions",
+                ]
+                if let m = model {
+                    args += ["--model", m.rawValue]
+                }
+                // Note: --resume requires a real Claude Code session ID (from system.init event),
+                // not our internal session UUID. We'll capture and store the real ID later.
+                // For now, each execution starts a fresh Claude session.
+                process.arguments = args
+                process.currentDirectoryURL = URL(fileURLWithPath: project.path)
+
+                // Environment — pass API key, strip nested-session guards
+                var env = ProcessInfo.processInfo.environment
+                env.removeValue(forKey: "CLAUDECODE")
+                env.removeValue(forKey: "CLAUDE_CODE_ENTRYPOINT")
+                env.removeValue(forKey: "CLAUDE_CODE_OAUTH_TOKEN")
+                env.removeValue(forKey: "ANTHROPIC_API_KEY")
+
+                let storedKey = AppSettings.shared.anthropicAPIKey
+                if !storedKey.isEmpty {
+                    Self.setAuthEnv(storedKey, into: &env)
+                } else {
+                    print("[Autoclaw] WARNING: No API key in settings")
+                }
+                process.environment = env
+
+                // Pipes
+                let stdinPipe = Pipe()
+                let stdoutPipe = Pipe()
+                let stderrPipe = Pipe()
+                process.standardInput = stdinPipe
+                process.standardOutput = stdoutPipe
+                process.standardError = stderrPipe
+
+                try process.run()
+
+                let session = ClaudeSession(
+                    sessionID: sessionId ?? UUID().uuidString,
+                    process: process,
+                    stdinPipe: stdinPipe
+                )
+
+                // Send initial prompt via stdin as stream-json user message
+                let initialMsg: [String: Any] = [
+                    "type": "user",
+                    "message": [
+                        "role": "user",
+                        "content": prompt,
+                    ],
+                ]
+                if let data = try? JSONSerialization.data(withJSONObject: initialMsg),
+                   let json = String(data: data, encoding: .utf8) {
+                    stdinPipe.fileHandleForWriting.write((json + "\n").data(using: .utf8)!)
+                    print("[Autoclaw] Sent interactive prompt (\(prompt.count) chars)")
+                }
+
+                // Parse NDJSON from stdout using readabilityHandler
+                var stdoutBuffer = Data()
+                var stderrCollected = ""
+
+                // Read stderr — collect for error reporting
+                stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+                    let data = handle.availableData
+                    guard !data.isEmpty else { return }
+                    if let text = String(data: data, encoding: .utf8) {
+                        stderrCollected += text
+                        for line in text.components(separatedBy: "\n") where !line.isEmpty {
+                            print("[Autoclaw] stderr: \(line.prefix(300))")
+                        }
+                    }
+                }
+
+                // Read stdout and parse NDJSON events
+                stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+                    let data = handle.availableData
+                    guard !data.isEmpty else {
+                        // EOF — process finished
+                        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                        stderrPipe.fileHandleForReading.readabilityHandler = nil
+                        session.isRunning = false
+                        let status = process.terminationStatus
+                        if status != 0 {
+                            let errDetail = stderrCollected.trimmingCharacters(in: .whitespacesAndNewlines)
+                            let msg = errDetail.isEmpty
+                                ? "Claude Code exited with status \(status)"
+                                : "Claude Code exited with status \(status): \(String(errDetail.suffix(500)))"
+                            print("[Autoclaw] ERROR: \(msg)")
+                            continuation.finish(throwing: AutoclawError.executionError(msg))
+                        } else {
+                            continuation.finish()
+                        }
                         return
                     }
 
-                    let process = Process()
-                    process.executableURL = claudeURL
+                    stdoutBuffer.append(data)
 
-                    var args: [String] = [
-                        "--output-format", "stream-json",
-                        "--input-format", "stream-json",
-                        "--verbose",
-                        "--dangerously-skip-permissions",
-                    ]
-                    if let m = model {
-                        args += ["--model", m.rawValue]
-                    }
-                    if let sid = sessionId {
-                        args += ["--resume", sid]
-                    }
-                    process.arguments = args
-                    process.currentDirectoryURL = URL(fileURLWithPath: project.path)
+                    // Split buffer on newlines and process complete lines
+                    while let newlineRange = stdoutBuffer.range(of: Data("\n".utf8)) {
+                        let lineData = stdoutBuffer.subdata(in: stdoutBuffer.startIndex..<newlineRange.lowerBound)
+                        stdoutBuffer.removeSubrange(stdoutBuffer.startIndex..<newlineRange.upperBound)
 
-                    // Environment — pass API key, strip nested-session guards
-                    var env = ProcessInfo.processInfo.environment
-                    env.removeValue(forKey: "CLAUDECODE")
-                    env.removeValue(forKey: "CLAUDE_CODE_ENTRYPOINT")
-                    env.removeValue(forKey: "CLAUDE_CODE_OAUTH_TOKEN")
-                    env.removeValue(forKey: "ANTHROPIC_API_KEY")
+                        guard let line = String(data: lineData, encoding: .utf8),
+                              !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
 
-                    let storedKey = AppSettings.shared.anthropicAPIKey
-                    if !storedKey.isEmpty {
-                        if storedKey.contains("-oat") {
-                            env["CLAUDE_CODE_OAUTH_TOKEN"] = storedKey
-                        } else {
-                            env["ANTHROPIC_API_KEY"] = storedKey
-                        }
-                    }
-                    process.environment = env
-
-                    // Pipes
-                    let stdinPipe = Pipe()
-                    let stdoutPipe = Pipe()
-                    let stderrPipe = Pipe()
-                    process.standardInput = stdinPipe
-                    process.standardOutput = stdoutPipe
-                    process.standardError = stderrPipe
-
-                    try process.run()
-
-                    // Send initial prompt via stdin as stream-json user message
-                    let initialMsg: [String: Any] = [
-                        "type": "user",
-                        "message": [
-                            "role": "user",
-                            "content": prompt,
-                        ],
-                    ]
-                    if let data = try? JSONSerialization.data(withJSONObject: initialMsg),
-                       let json = String(data: data, encoding: .utf8) {
-                        stdinPipe.fileHandleForWriting.write((json + "\n").data(using: .utf8)!)
-                        print("[Autoclaw] Sent interactive prompt (\(prompt.count) chars)")
-                    }
-
-                    // Parse NDJSON from stdout using readabilityHandler
-                    var stdoutBuffer = Data()
-                    var finished = false
-
-                    stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-                        let data = handle.availableData
-                        guard !data.isEmpty else { return }
-                        if let text = String(data: data, encoding: .utf8) {
-                            for line in text.components(separatedBy: "\n") where !line.isEmpty {
-                                print("[Autoclaw] stderr: \(line.prefix(200))")
-                            }
-                        }
-                    }
-
-                    stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-                        let data = handle.availableData
-                        guard !data.isEmpty else {
-                            // EOF
-                            guard !finished else { return }
-                            finished = true
-                            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                            stderrPipe.fileHandleForReading.readabilityHandler = nil
-                            let status = process.terminationStatus
-                            if status != 0 {
-                                continuation.finish(throwing: AutoclawError.executionError(
-                                    "Claude Code exited with status \(status)"))
-                            } else {
-                                continuation.finish()
-                            }
-                            return
+                        guard let jsonData = line.data(using: .utf8),
+                              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                              let type = json["type"] as? String else {
+                            print("[Autoclaw] stream (non-JSON): \(line.prefix(300))")
+                            // Yield non-JSON stderr-like output so user can see it
+                            continuation.yield(line + "\n")
+                            continue
                         }
 
-                        stdoutBuffer.append(data)
+                        let subtype = (json["subtype"] as? String) ?? ""
+                        print("[Autoclaw] stream event: type=\(type) subtype=\(subtype)")
 
-                        // Process complete lines
-                        while let newlineRange = stdoutBuffer.range(of: Data("\n".utf8)) {
-                            let lineData = stdoutBuffer.subdata(in: stdoutBuffer.startIndex..<newlineRange.lowerBound)
-                            stdoutBuffer.removeSubrange(stdoutBuffer.startIndex..<newlineRange.upperBound)
-
-                            guard let line = String(data: lineData, encoding: .utf8),
-                                  !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
-
-                            guard let jsonData = line.data(using: .utf8),
-                                  let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                                  let type = json["type"] as? String else { continue }
-
-                            // Extract text from events
-                            if let text = Self.extractText(type: type, json: json) {
-                                continuation.yield(text)
-                            }
+                        // Extract displayable text from the event
+                        if let text = Self.extractText(type: type, json: json) {
+                            continuation.yield(text)
                         }
                     }
-
-                    process.terminationHandler = { proc in
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            guard !finished else { return }
-                            finished = true
-                            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                            stderrPipe.fileHandleForReading.readabilityHandler = nil
-                            // Close stdin to signal we're done
-                            stdinPipe.fileHandleForWriting.closeFile()
-                            let status = proc.terminationStatus
-                            if status != 0 {
-                                continuation.finish(throwing: AutoclawError.executionError(
-                                    "Claude Code exited with status \(status)"))
-                            } else {
-                                continuation.finish()
-                            }
-                        }
-                    }
-                } catch {
-                    continuation.finish(throwing: error)
                 }
+
+                // Handle process termination — give readabilityHandler time to drain
+                process.terminationHandler = { proc in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                        stderrPipe.fileHandleForReading.readabilityHandler = nil
+                        session.isRunning = false
+                        let status = proc.terminationStatus
+                        if status != 0 {
+                            let errDetail = stderrCollected.trimmingCharacters(in: .whitespacesAndNewlines)
+                            let msg = errDetail.isEmpty
+                                ? "Claude Code exited with status \(status)"
+                                : "Claude Code exited with status \(status): \(String(errDetail.suffix(500)))"
+                            print("[Autoclaw] ERROR (termination): \(msg)")
+                            continuation.finish(throwing: AutoclawError.executionError(msg))
+                        } else {
+                            continuation.finish()
+                        }
+                    }
+                }
+            } catch {
+                continuation.finish(throwing: error)
             }
         }
     }
 
-    // MARK: - Event Text Extraction
+    // MARK: - Event Text Extraction (ported from autoclawd parseEvent)
 
     /// Extract displayable text from a stream-json event.
     private static func extractText(type: String, json: [String: Any]) -> String? {
         switch type {
+        case "system":
+            let subtype = json["subtype"] as? String
+            if subtype == "init", let sid = json["session_id"] as? String {
+                print("[Autoclaw] Session ID: \(sid)")
+                return nil  // Don't display init events
+            }
+            return nil
+
         case "assistant":
+            // Complete assistant message — extract text and tool info from content blocks
             if let message = json["message"] as? [String: Any],
                let content = message["content"] as? [[String: Any]] {
                 var texts: [String] = []
                 for block in content {
-                    if block["type"] as? String == "text",
-                       let text = block["text"] as? String {
+                    let blockType = block["type"] as? String
+                    if blockType == "text", let text = block["text"] as? String {
                         texts.append(text)
+                    } else if blockType == "tool_use" {
+                        let name = block["name"] as? String ?? "unknown"
+                        let input = block["input"] as? [String: Any]
+                        let inputStr = formatToolInput(name: name, input: input)
+                        if !inputStr.isEmpty {
+                            texts.append("[\(name)] \(inputStr)")
+                        }
                     }
                 }
                 return texts.isEmpty ? nil : texts.joined(separator: "\n")
             }
+            return nil
 
         case "result":
             let subtype = json["subtype"] as? String
+            let resultText = json["result"] as? String ?? ""
             if subtype == "error" {
-                return json["error"] as? String ?? json["result"] as? String
+                return json["error"] as? String ?? resultText
             }
-            return json["result"] as? String
+            return resultText.isEmpty ? nil : resultText
 
         case "stream_event":
+            // Partial streaming — extract from the raw Anthropic API event
             guard let event = json["event"] as? [String: Any],
                   let eventType = event["type"] as? String else { return nil }
-            if eventType == "content_block_delta",
-               let delta = event["delta"] as? [String: Any],
-               delta["type"] as? String == "text_delta",
-               let text = delta["text"] as? String {
-                return text
+
+            switch eventType {
+            case "content_block_delta":
+                if let delta = event["delta"] as? [String: Any] {
+                    let deltaType = delta["type"] as? String
+                    if deltaType == "text_delta", let text = delta["text"] as? String {
+                        return text
+                    }
+                }
+            case "content_block_start":
+                if let block = event["content_block"] as? [String: Any],
+                   block["type"] as? String == "tool_use",
+                   let name = block["name"] as? String {
+                    return "\n[\(name)] "
+                }
+            default:
+                break
             }
+            return nil
 
         default:
-            break
+            return nil
         }
-        return nil
+    }
+
+    /// Format tool input into a human-readable summary.
+    private static func formatToolInput(name: String, input: [String: Any]?) -> String {
+        guard let input = input else { return "" }
+        switch name {
+        case "Read":
+            return input["file_path"] as? String ?? ""
+        case "Write", "Edit":
+            return input["file_path"] as? String ?? ""
+        case "Bash":
+            return String((input["command"] as? String ?? "").prefix(120))
+        case "Glob":
+            return input["pattern"] as? String ?? ""
+        case "Grep":
+            return input["pattern"] as? String ?? ""
+        default:
+            if let first = input.first {
+                return "\(first.key)=\(String(describing: first.value).prefix(80))"
+            }
+            return ""
+        }
+    }
+
+    // MARK: - Auth Helper (ported from autoclawd)
+
+    /// Detects token type and sets the correct env var:
+    /// - OAuth tokens (sk-ant-oat* or contains -oat) → CLAUDE_CODE_OAUTH_TOKEN
+    /// - API keys → ANTHROPIC_API_KEY
+    static func setAuthEnv(_ key: String, into env: inout [String: String]) {
+        let cleaned = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        if cleaned.hasPrefix("sk-ant-oat") || cleaned.contains("-oat") {
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = cleaned
+            print("[Autoclaw] Using OAuth token (len=\(cleaned.count))")
+        } else {
+            env["ANTHROPIC_API_KEY"] = cleaned
+            print("[Autoclaw] Using API key (len=\(cleaned.count))")
+        }
     }
 
     // MARK: - Prompt Builder

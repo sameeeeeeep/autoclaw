@@ -109,7 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupPillWindow() {
         pillWindow = PillWindow(appState: appState)
-        pillWindow.orderFront(nil)
+        // Don't show by default — toggle via menu bar
     }
 
     private func setupMainPanel() {
@@ -127,10 +127,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onToggle: { [weak self] in self?.appState.toggleSession() },
             onPause:  { [weak self] in
                 guard let s = self?.appState else { return }
-                if s.sessionActive { s.togglePause() } else { s.toggleSession() }
+                if s.lastEndedThread != nil {
+                    // Session just ended — Fn resumes it
+                    s.resumeEndedSession()
+                    self?.showThreadToast()
+                } else if s.sessionActive {
+                    s.togglePause()
+                } else {
+                    s.toggleSession()
+                }
             },
-            onEnd:    { [weak self] in self?.appState.endSession() },
-            onScreenshot: { [weak self] in self?.appState.addScreenshotToThread() }
+            onEnd:    { [weak self] in
+                guard let s = self?.appState else { return }
+                if !s.sessionActive && s.lastEndedThread != nil {
+                    // Session already ended, toast showing — double-Option dismisses
+                    self?.threadWindow.dismiss()
+                    s.dismissEndedSession()
+                } else {
+                    s.endSession()
+                }
+            },
+            onScreenshot: { [weak self] in self?.appState.addScreenshotToThread() },
+            onCycleMode: { [weak self] in self?.appState.cycleRequestMode() }
         )
         hotkeyMonitor.start()
     }
@@ -210,12 +228,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        // Auto dismiss thread on execution start, show main panel
+        // Re-render toast when executing state changes (for glow + icon update)
         appState.$isExecuting
-            .filter { $0 }
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.mainPanelWindow.makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
+                guard let self else { return }
+                if self.appState.showThread {
+                    self.showThreadToast()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Re-render toast as execution output streams in (throttled)
+        appState.$executionOutput
+            .throttle(for: .milliseconds(500), scheduler: DispatchQueue.main, latest: true)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if self.appState.showThread && self.appState.isExecuting {
+                    self.showThreadToast()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Re-render toast when session ends (to show ended state)
+        appState.$sessionActive
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] active in
+                guard let self else { return }
+                if !active && !self.appState.threadMessages.isEmpty {
+                    self.appState.showThread = true
+                    self.showThreadToast()
+                }
             }
             .store(in: &cancellables)
     }
@@ -223,25 +267,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Toast Presentation
 
     private func showThreadToast() {
+        let isEnded = !appState.sessionActive && !appState.threadMessages.isEmpty
+
         let view = ThreadToastView(
             appState: appState,
             onApprove: { [weak self] in
-                self?.threadWindow.dismiss()
-                self?.appState.showThread = false
                 self?.appState.approveSuggestion()
-                self?.mainPanelWindow.makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
+                // Toast stays open — re-renders with executing state
             },
             onDirectExecute: { [weak self] in
-                self?.threadWindow.dismiss()
-                self?.appState.showThread = false
-                self?.mainPanelWindow.makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
+                // Toast stays open — re-renders with executing state
+                _ = self  // keep reference alive
             },
             onDismiss: { [weak self] in
                 self?.threadWindow.dismiss()
-                self?.appState.dismissThread()
-            }
+                if isEnded {
+                    self?.appState.dismissEndedSession()
+                } else {
+                    self?.appState.dismissThread()
+                }
+            },
+            onResume: isEnded ? { [weak self] in
+                self?.threadWindow.dismiss()
+                self?.appState.resumeEndedSession()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    self?.showThreadToast()
+                }
+            } : nil
         )
 
         threadWindow.show(with: view)
