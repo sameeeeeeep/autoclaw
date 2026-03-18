@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Menu bar icon variants
     private var defaultIcon: NSImage?
     private var activeIcon: NSImage?
+    private var pausedIcon: NSImage?
 
     let appState = AppState.shared
 
@@ -45,6 +46,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             img.size = NSSize(width: 18, height: 18)
             img.isTemplate = false
             activeIcon = img
+        }
+        if let path = Bundle.main.path(forResource: "menubar_icon_paused", ofType: "png"),
+           let img = NSImage(contentsOfFile: path) {
+            img.size = NSSize(width: 18, height: 18)
+            img.isTemplate = false
+            pausedIcon = img
         }
 
         if let button = statusItem.button {
@@ -122,7 +129,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let s = self?.appState else { return }
                 if s.sessionActive { s.togglePause() } else { s.toggleSession() }
             },
-            onEnd:    { [weak self] in self?.appState.endSession() }
+            onEnd:    { [weak self] in self?.appState.endSession() },
+            onScreenshot: { [weak self] in self?.appState.addScreenshotToThread() }
         )
         hotkeyMonitor.start()
     }
@@ -135,13 +143,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - State Observation
 
     private func observeState() {
-        // Swap menu bar icon based on session state
-        appState.$sessionActive
-            .removeDuplicates()
+        // Swap menu bar icon based on session state (active/paused/inactive)
+        Publishers.CombineLatest(appState.$sessionActive, appState.$sessionPaused)
+            .removeDuplicates(by: { $0 == $1 })
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] active in
+            .sink { [weak self] active, paused in
                 guard let self else { return }
-                let icon = active ? (self.activeIcon ?? self.defaultIcon) : self.defaultIcon
+                let icon: NSImage?
+                if active && paused {
+                    icon = self.pausedIcon ?? self.defaultIcon
+                } else if active {
+                    icon = self.activeIcon ?? self.defaultIcon
+                } else {
+                    icon = self.defaultIcon
+                }
                 self.statusItem.button?.image = icon ?? NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Autoclaw")
             }
             .store(in: &cancellables)
@@ -214,6 +229,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.threadWindow.dismiss()
                 self?.appState.showThread = false
                 self?.appState.approveSuggestion()
+                self?.mainPanelWindow.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            },
+            onDirectExecute: { [weak self] in
+                self?.threadWindow.dismiss()
+                self?.appState.showThread = false
                 self?.mainPanelWindow.makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)
             },

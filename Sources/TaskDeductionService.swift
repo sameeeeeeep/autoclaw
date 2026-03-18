@@ -44,9 +44,9 @@ final class TaskDeductionService: @unchecked Sendable {
 
     // MARK: - Deduce via Claude CLI
 
-    func deduce(context: TaskContext) async throws -> TaskSuggestion {
+    func deduce(context: TaskContext, model: ClaudeModel = .haiku) async throws -> TaskSuggestion {
         let clipPreview = context.clipboardEntries.first?.content.prefix(80) ?? ""
-        alog("[Autoclaw] deduce() called — \(context.clipboardEntries.count) clips, \(context.userMessages.count) msgs — first clip: \(clipPreview)…")
+        alog("[Autoclaw] deduce() called — model=\(model.displayName) \(context.clipboardEntries.count) clips, \(context.userMessages.count) msgs — first clip: \(clipPreview)…")
 
         guard let claudeURL = Self.findCLI() else {
             alog("[Autoclaw] claude CLI not found")
@@ -56,24 +56,22 @@ final class TaskDeductionService: @unchecked Sendable {
 
         let prompt = buildPrompt(context: context)
 
-        // Shell out to `claude --model haiku --print <prompt>` for fast single-shot inference
-        let response = try await callHaiku(claudeURL: claudeURL, prompt: prompt)
+        let response = try await callCLI(claudeURL: claudeURL, prompt: prompt, model: model)
 
-        alog("[Autoclaw] Haiku response (\(response.count) chars): \(response.prefix(300))")
+        alog("[Autoclaw] \(model.displayName) response (\(response.count) chars): \(response.prefix(300))")
 
         return try parseResponse(response)
     }
 
-    // MARK: - Call Haiku via CLI (same approach as autoclawd)
+    // MARK: - Call Claude CLI with specified model
 
-    private func callHaiku(claudeURL: URL, prompt: String) async throws -> String {
+    private func callCLI(claudeURL: URL, prompt: String, model: ClaudeModel) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
                 process.executableURL = claudeURL
-                // Use --output-format json to get token usage in the response
                 process.arguments = [
-                    "--model", "claude-haiku-4-5-20251001",
+                    "--model", model.rawValue,
                     "-p", prompt,
                     "--output-format", "json"
                 ]
@@ -116,17 +114,17 @@ final class TaskDeductionService: @unchecked Sendable {
                         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
                     if process.terminationStatus != 0 {
-                        alog("[Autoclaw] Haiku CLI exited \(process.terminationStatus)")
+                        alog("[Autoclaw] CLI exited \(process.terminationStatus)")
                         alog("[Autoclaw] stderr: \(errMsg.prefix(400))")
                         alog("[Autoclaw] stdout: \(raw.prefix(400))")
                         continuation.resume(throwing: AutoclawError.parseError(
-                            "Haiku exited \(process.terminationStatus): \(errMsg.prefix(200))"
+                            "CLI exited \(process.terminationStatus): \(errMsg.prefix(200))"
                         ))
                         return
                     }
 
                     if raw.isEmpty {
-                        continuation.resume(throwing: AutoclawError.parseError("Haiku returned empty response"))
+                        continuation.resume(throwing: AutoclawError.parseError("CLI returned empty response"))
                         return
                     }
 
@@ -138,7 +136,7 @@ final class TaskDeductionService: @unchecked Sendable {
                             let inTok  = usage["input_tokens"]  as? Int ?? 0
                             let outTok = usage["output_tokens"] as? Int ?? 0
                             let cost   = envelope["total_cost_usd"] as? Double ?? 0
-                            alog("[Autoclaw] Haiku tokens — in:\(inTok) out:\(outTok) cost:$\(String(format: "%.5f", cost))")
+                            alog("[Autoclaw] tokens — in:\(inTok) out:\(outTok) cost:$\(String(format: "%.5f", cost))")
                         }
                         // Extract the actual model response text
                         if let result = envelope["result"] as? String {
@@ -148,10 +146,10 @@ final class TaskDeductionService: @unchecked Sendable {
                     }
 
                     // Fallback: treat raw output as the response
-                    alog("[Autoclaw] Warning: could not parse JSON envelope, using raw output")
+                    alog("[Autoclaw] Warning: could not parse JSON envelope, using raw")
                     continuation.resume(returning: raw)
                 } catch {
-                    alog("[Autoclaw] Haiku CLI failed: \(error.localizedDescription)")
+                    alog("[Autoclaw] CLI failed: \(error.localizedDescription)")
                     continuation.resume(throwing: error)
                 }
             }
@@ -195,12 +193,27 @@ final class TaskDeductionService: @unchecked Sendable {
             sections.append("\(context.screenshotPaths.count) screenshot(s) were captured as additional context.")
         }
 
+        // Available connectors/integrations
+        sections.append("""
+        ## Available Connectors
+        The execution environment has these integrations available via MCP:
+        - **ClickUp**: Create tasks, search tasks, get task details, add comments, manage lists/folders/spaces, time tracking. Use when the user mentions ClickUp, tasks, tickets, project management, or wants to add/track work items.
+        - **GitHub**: Create issues, PRs, search repos, manage branches. Use for any git/GitHub workflow.
+        - **Web Search**: Search the web for information.
+        - **File System**: Read, write, edit files in the project directory.
+
+        When deducing the task, consider whether any of these connectors should be used. For example:
+        - "add this to clickup" → use ClickUp connector to create a task
+        - "create a ticket for this bug" → use ClickUp connector
+        - "make a PR for this" → use GitHub connector
+        """)
+
         sections.append("""
         ## Instructions
         Based on ALL the context above, deduce what the user needs AND determine the kind of response.
 
         Choose the correct "kind":
-        - "execute" — task requires running code, making file changes, shell commands, git operations, creating PRs, etc. User needs Claude Code to act on their project.
+        - "execute" — task requires running code, making file changes, shell commands, git operations, creating PRs, using connectors (ClickUp, GitHub, etc.), or any action. User needs Claude Code to act.
         - "draft" — user needs a piece of text to use directly: email reply, message, document, commit message, PR description, etc. Output the ready-to-use text in "draft".
         - "answer" — user needs information, explanation, lookup, translation, summary, etc. Put the answer in "draft".
 
@@ -219,6 +232,9 @@ final class TaskDeductionService: @unchecked Sendable {
         - ["code-edit"] for a single code change
         - ["research", "code-edit", "run-tests"] for research → implement → verify
         - ["create-github-issue", "code-edit", "create-pr"] for full issue-to-PR workflow
+        - ["clickup-create-task"] for creating a ClickUp task
+        - ["clickup-search", "clickup-update-task"] for finding and updating ClickUp tasks
+        - ["research", "clickup-create-task"] for researching then adding to ClickUp
         For "draft" or "answer" tasks, skills can be empty or omitted.
 
         If the task is ambiguous or you need more information, respond with:

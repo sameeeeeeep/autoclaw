@@ -1,6 +1,32 @@
 import SwiftUI
 import Combine
 
+// MARK: - Model Selection
+
+enum ClaudeModel: String, CaseIterable, Identifiable {
+    case haiku = "claude-haiku-4-5-20251001"
+    case sonnet = "claude-sonnet-4-5-20250514"
+    case opus = "claude-opus-4-0-20250514"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .haiku:  return "Haiku"
+        case .sonnet: return "Sonnet"
+        case .opus:   return "Opus"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .haiku:  return "H"
+        case .sonnet: return "S"
+        case .opus:   return "O"
+        }
+    }
+}
+
 @MainActor
 final class AppState: ObservableObject {
     static let shared = AppState()
@@ -13,10 +39,21 @@ final class AppState: ObservableObject {
     let projectStore = ProjectStore()
     let sessionStore = SessionStore()
 
+    // MARK: - Model & Project Preferences
+    @Published var selectedModel: ClaudeModel {
+        didSet { UserDefaults.standard.set(selectedModel.rawValue, forKey: "autoclaw_selected_model") }
+    }
+    @Published var selectedProject: Project? {
+        didSet {
+            if let p = selectedProject {
+                UserDefaults.standard.set(p.id.uuidString, forKey: "autoclaw_last_project_id")
+            }
+        }
+    }
+
     // MARK: - Session State
     @Published var sessionActive = false
     @Published var sessionPaused = false
-    @Published var selectedProject: Project?
     @Published var needsProjectSelection = false
     @Published var currentSessionId: String?
     @Published var currentThread: SessionThread?
@@ -48,6 +85,20 @@ final class AppState: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
+        // Restore saved model preference (default: haiku)
+        if let savedModel = UserDefaults.standard.string(forKey: "autoclaw_selected_model"),
+           let model = ClaudeModel(rawValue: savedModel) {
+            self.selectedModel = model
+        } else {
+            self.selectedModel = .haiku
+        }
+
+        // Restore last-used project
+        if let savedId = UserDefaults.standard.string(forKey: "autoclaw_last_project_id"),
+           let uuid = UUID(uuidString: savedId) {
+            self.selectedProject = projectStore.projects.first(where: { $0.id == uuid })
+        }
+
         setupBindings()
     }
 
@@ -197,7 +248,7 @@ final class AppState: ObservableObject {
     // MARK: - Clipboard -> Thread (no longer auto-deduces)
 
     private func handleClipboardChange(_ content: String) {
-        guard sessionActive, !isDeducing, !isExecuting else { return }
+        guard sessionActive, !sessionPaused, !isDeducing, !isExecuting else { return }
 
         lastClipboard = content
         clipboardCapturedApp = activeApp
@@ -306,7 +357,7 @@ final class AppState: ObservableObject {
 
         Task { @MainActor in
             do {
-                let suggestion = try await taskDeductionService.deduce(context: context)
+                let suggestion = try await taskDeductionService.deduce(context: context, model: self.selectedModel)
 
                 if suggestion.needsClarification {
                     print("[Autoclaw] Haiku needs clarification: \(suggestion.clarification?.question ?? "?")")
@@ -448,6 +499,112 @@ final class AppState: ObservableObject {
                     self.executionOutput += chunk
                 }
                 // Add execution result to thread
+                self.threadMessages.append(.execution(output: self.executionOutput))
+            } catch {
+                let errMsg = error.localizedDescription
+                self.executionOutput += "\n[Error: \(errMsg)]"
+                self.threadMessages.append(.error(message: errMsg))
+            }
+            self.isExecuting = false
+            self.statusLine = "Done"
+        }
+    }
+
+    // MARK: - Direct Execute (skip deduction, go straight to Claude Code)
+
+    /// Send a message + accumulated context directly to Claude Code for execution
+    func directExecuteMessage(_ text: String) {
+        if !text.isEmpty {
+            threadMessages.append(.userMessage(text: text))
+        }
+        directExecute()
+    }
+
+    /// Build prompt from thread context and send directly to Claude Code
+    func directExecute() {
+        guard let project = selectedProject else { return }
+
+        // Gather context from thread
+        var sections: [String] = []
+
+        sections.append("You are an AI assistant. The user has provided the following context and instructions. Complete the task thoroughly.")
+
+        var clipboardEntries: [ClipboardEntry] = []
+        var userMessages: [String] = []
+        var attachmentPaths: [String] = []
+
+        for msg in threadMessages {
+            switch msg {
+            case .clipboard(_, let content, let app, let window, _):
+                clipboardEntries.append(ClipboardEntry(content: content, app: app, window: window))
+            case .userMessage(_, let text, _):
+                userMessages.append(text)
+            case .attachment(_, let path, _, _, _):
+                attachmentPaths.append(path)
+            default:
+                break
+            }
+        }
+
+        guard !clipboardEntries.isEmpty || !userMessages.isEmpty || !attachmentPaths.isEmpty else { return }
+
+        if !clipboardEntries.isEmpty {
+            sections.append("## Clipboard Context")
+            for (i, entry) in clipboardEntries.enumerated() {
+                sections.append("### Capture \(i + 1) (from \(entry.app) — \(entry.window))\n```\n\(entry.content)\n```")
+            }
+        }
+
+        if !userMessages.isEmpty {
+            sections.append("## User Instructions")
+            for msg in userMessages {
+                sections.append("- \"\(msg)\"")
+            }
+        }
+
+        if !attachmentPaths.isEmpty {
+            sections.append("## Attached Files")
+            for path in attachmentPaths {
+                sections.append("- \(path)")
+            }
+        }
+
+        sections.append("""
+        ## Instructions
+        - Execute the task completely — don't just describe what to do, actually do it.
+        - Use all available tools: edit files, run commands, search the web, create issues, etc.
+        - If this involves writing a reply or document, produce the final output.
+        - If this involves code changes, make the actual edits.
+        - Be thorough but concise in your output.
+        """)
+
+        let prompt = sections.joined(separator: "\n\n")
+
+        isExecuting = true
+        executionOutput = ""
+        statusLine = "Executing (\(selectedModel.displayName))..."
+
+        // Update thread title from first user message
+        let title = userMessages.last ?? "Direct execution"
+        if let thread = currentThread {
+            sessionStore.updateThread(id: thread.id, title: String(title.prefix(40)), taskTitle: title)
+            if let updated = sessionStore.threads.first(where: { $0.id == thread.id }) {
+                currentThread = updated
+            }
+        }
+
+        print("[Autoclaw] Direct execute with \(selectedModel.displayName): \(title.prefix(60))")
+
+        Task {
+            do {
+                for try await chunk in claudeCodeRunner.executeDirect(
+                    prompt: prompt,
+                    project: project,
+                    model: selectedModel,
+                    sessionId: currentSessionId
+                ) {
+                    self.executionOutput += chunk
+                }
                 self.threadMessages.append(.execution(output: self.executionOutput))
             } catch {
                 let errMsg = error.localizedDescription

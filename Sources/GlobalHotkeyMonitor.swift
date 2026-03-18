@@ -5,9 +5,9 @@ import os
 private let logger = Logger(subsystem: "com.autoclaw.app", category: "Hotkey")
 
 /// Monitors for global hotkeys to control sessions.
-/// - Double-tap Right Option (⌥): toggle session on/off (always works on macOS Sequoia)
+/// - Double-tap Left Option (⌥): end session
+/// - Option + Z: screenshot to thread
 /// - Single Fn tap: pause/unpause session (only if System Settings > Keyboard > "Press fn key to" = "Do Nothing")
-/// - Fn + Space: end session
 final class GlobalHotkeyMonitor {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -19,25 +19,42 @@ final class GlobalHotkeyMonitor {
     private var onToggle: () -> Void
     private var onPause: () -> Void
     private var onEnd: () -> Void
+    private var onScreenshot: () -> Void
 
     // Fn tracking
     private var fnDown = false
     private var fnConsumed = false  // set when Fn+Space fires, suppresses pause on Fn release
 
-    // Double-tap tracking (Right Option key)
-    private var lastRightOptionUpTime: CFAbsoluteTime = 0
-    private var rightOptionDown = false
+    // Double-tap tracking (Left Option key — end session)
+    private var lastLeftOptionUpTime: CFAbsoluteTime = 0
+    private var leftOptionDown = false
+    private var leftOptionConsumed = false  // set when Left⌥+Space fires, suppresses end on release
+
     private let doubleTapWindow: CFAbsoluteTime = 0.35
 
     // Debounce
     private var lastToggleTime: CFAbsoluteTime = 0
     private var lastPauseTime: CFAbsoluteTime = 0
     private var lastEndTime: CFAbsoluteTime = 0
+    private var lastScreenshotTime: CFAbsoluteTime = 0
 
-    init(onToggle: @escaping () -> Void, onPause: @escaping () -> Void, onEnd: @escaping () -> Void) {
+    init(onToggle: @escaping () -> Void, onPause: @escaping () -> Void, onEnd: @escaping () -> Void, onScreenshot: @escaping () -> Void = {}) {
         self.onToggle = onToggle
         self.onPause = onPause
         self.onEnd = onEnd
+        self.onScreenshot = onScreenshot
+    }
+
+    static func debugLog(_ msg: String) {
+        let line = "\(ISO8601DateFormatter().string(from: Date())) [Hotkey] \(msg)\n"
+        let url = URL(fileURLWithPath: "/tmp/autoclaw_hotkey.log")
+        if let fh = try? FileHandle(forWritingTo: url) {
+            fh.seekToEndOfFile()
+            fh.write(line.data(using: .utf8)!)
+            fh.closeFile()
+        } else {
+            try? line.data(using: .utf8)?.write(to: url)
+        }
     }
 
     func start() {
@@ -84,8 +101,10 @@ final class GlobalHotkeyMonitor {
 
         guard let eventTap = eventTap else {
             logger.error("CGEvent tap failed — grant Accessibility permission in System Settings > Privacy & Security > Accessibility")
+            Self.debugLog("⚠️ CGEvent tap FAILED — grant Accessibility permission")
             return
         }
+        Self.debugLog("✅ CGEvent tap created successfully")
 
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
@@ -133,32 +152,36 @@ final class GlobalHotkeyMonitor {
             fnConsumed = false
         }
 
-        // --- Double-tap Right Option (keyCode 61 = kVK_RightOption) ---
-        if keyCode == 61 {
+        // --- Double-tap Left Option (keyCode 58 = kVK_Option) → end session ---
+        if keyCode == 58 {
             let optionPressed = flags.contains(.maskAlternate)
-            if optionPressed && !rightOptionDown {
-                rightOptionDown = true
-            } else if !optionPressed && rightOptionDown {
-                rightOptionDown = false
-                let otherMods: CGEventFlags = [.maskShift, .maskControl, .maskCommand]
-                if flags.intersection(otherMods).isEmpty {
-                    let now = CFAbsoluteTimeGetCurrent()
-                    if now - lastRightOptionUpTime < doubleTapWindow {
-                        lastRightOptionUpTime = 0
-                        fireToggle(source: "Double-tap Right ⌥ (CGEvent)")
-                    } else {
-                        lastRightOptionUpTime = now
+            if optionPressed && !leftOptionDown {
+                leftOptionDown = true
+                leftOptionConsumed = false
+            } else if !optionPressed && leftOptionDown {
+                leftOptionDown = false
+                if !leftOptionConsumed {
+                    let otherMods: CGEventFlags = [.maskShift, .maskControl, .maskCommand]
+                    if flags.intersection(otherMods).isEmpty {
+                        let now = CFAbsoluteTimeGetCurrent()
+                        if now - lastLeftOptionUpTime < doubleTapWindow {
+                            lastLeftOptionUpTime = 0
+                            fireEnd(source: "Double-tap Left ⌥ (CGEvent)")
+                        } else {
+                            lastLeftOptionUpTime = now
+                        }
                     }
                 }
+                leftOptionConsumed = false
             }
         }
     }
 
     private func handleCGKeyDown(keyCode: Int64, flags: CGEventFlags) {
-        // Space = keyCode 49, while Fn is held
-        if keyCode == 49 && fnDown {
-            fnConsumed = true
-            fireEnd(source: "Fn+Space (CGEvent)")
+        // Option + Z (keyCode 6) → screenshot
+        if keyCode == 6 && flags.contains(.maskAlternate) {
+            leftOptionConsumed = true
+            fireScreenshot(source: "⌥+Z (CGEvent)")
         }
     }
 
@@ -182,32 +205,36 @@ final class GlobalHotkeyMonitor {
             fnConsumed = false
         }
 
-        // --- Double-tap Right Option (keyCode 61) ---
-        if event.keyCode == 61 {
+        // --- Double-tap Left Option (keyCode 58) → end session ---
+        if event.keyCode == 58 {
             let optionPressed = event.modifierFlags.contains(.option)
-            if optionPressed && !rightOptionDown {
-                rightOptionDown = true
-            } else if !optionPressed && rightOptionDown {
-                rightOptionDown = false
-                let otherMods: NSEvent.ModifierFlags = [.shift, .control, .command]
-                if event.modifierFlags.intersection(otherMods).isEmpty {
-                    let now = CFAbsoluteTimeGetCurrent()
-                    if now - lastRightOptionUpTime < doubleTapWindow {
-                        lastRightOptionUpTime = 0
-                        fireToggle(source: "Double-tap Right ⌥ (NSEvent)")
-                    } else {
-                        lastRightOptionUpTime = now
+            if optionPressed && !leftOptionDown {
+                leftOptionDown = true
+                leftOptionConsumed = false
+            } else if !optionPressed && leftOptionDown {
+                leftOptionDown = false
+                if !leftOptionConsumed {
+                    let otherMods: NSEvent.ModifierFlags = [.shift, .control, .command]
+                    if event.modifierFlags.intersection(otherMods).isEmpty {
+                        let now = CFAbsoluteTimeGetCurrent()
+                        if now - lastLeftOptionUpTime < doubleTapWindow {
+                            lastLeftOptionUpTime = 0
+                            fireEnd(source: "Double-tap Left ⌥ (NSEvent)")
+                        } else {
+                            lastLeftOptionUpTime = now
+                        }
                     }
                 }
+                leftOptionConsumed = false
             }
         }
     }
 
     private func handleNSKeyDown(_ event: NSEvent) {
-        // Space = keyCode 49, while Fn is held
-        if event.keyCode == 49 && fnDown {
-            fnConsumed = true
-            fireEnd(source: "Fn+Space (NSEvent)")
+        // Option + Z (keyCode 6) → screenshot
+        if event.keyCode == 6 && event.modifierFlags.contains(.option) {
+            leftOptionConsumed = true
+            fireScreenshot(source: "⌥+Z (NSEvent)")
         }
     }
 
@@ -235,6 +262,14 @@ final class GlobalHotkeyMonitor {
         lastEndTime = now
         logger.info("End hotkey (\(source, privacy: .public))")
         DispatchQueue.main.async { self.onEnd() }
+    }
+
+    private func fireScreenshot(source: String) {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now - lastScreenshotTime > 0.5 else { return }
+        lastScreenshotTime = now
+        logger.info("Screenshot hotkey (\(source, privacy: .public))")
+        DispatchQueue.main.async { self.onScreenshot() }
     }
 
     func stop() {

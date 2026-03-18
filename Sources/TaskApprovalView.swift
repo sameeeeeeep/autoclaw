@@ -5,6 +5,7 @@ import SwiftUI
 struct ThreadToastView: View {
     @ObservedObject var appState: AppState
     var onApprove: () -> Void
+    var onDirectExecute: () -> Void
     var onDismiss: () -> Void
 
     @State private var inputText = ""
@@ -59,38 +60,134 @@ struct ThreadToastView: View {
     // MARK: - Header
 
     private var threadHeader: some View {
-        HStack(alignment: .center, spacing: 6) {
-            LogoImage(size: 14)
+        VStack(spacing: 0) {
+            // Top row: logo + message count + close
+            HStack(alignment: .center, spacing: 6) {
+                LogoImage(size: 14)
 
-            Text("autoclaw")
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundStyle(.primary)
+                Text("autoclaw")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.primary)
 
-            Spacer()
+                Spacer()
 
-            if appState.isDeducing {
-                ProgressView()
-                    .controlSize(.mini)
-                    .scaleEffect(0.7)
-            }
+                if appState.isDeducing {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .scaleEffect(0.7)
+                }
 
-            Text("\(appState.threadMessages.count)")
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(Color.primary.opacity(0.06))
-                .clipShape(Capsule())
-
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .medium))
+                Text("\(appState.threadMessages.count)")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.06))
+                    .clipShape(Capsule())
+
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+
+            // Bottom row: model picker + project picker
+            HStack(spacing: 6) {
+                // Model picker
+                modelPicker
+
+                // Project picker
+                projectPicker
+
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+    }
+
+    // MARK: - Model Picker
+
+    private var modelPicker: some View {
+        Menu {
+            ForEach(ClaudeModel.allCases) { model in
+                Button {
+                    appState.selectedModel = model
+                } label: {
+                    HStack {
+                        Text(model.displayName)
+                        if model == appState.selectedModel {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "cpu")
+                    .font(.system(size: 7))
+                Text(appState.selectedModel.displayName)
+                    .font(.system(size: 9, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 6, weight: .bold))
+            }
+            .foregroundStyle(.cyan)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Color.cyan.opacity(0.12))
+            .clipShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    // MARK: - Project Picker
+
+    private var projectPicker: some View {
+        Menu {
+            ForEach(appState.projectStore.projects) { project in
+                Button {
+                    appState.selectedProject = project
+                    // Reassign current thread if needed
+                    if let thread = appState.currentThread {
+                        appState.sessionStore.reassignProject(id: thread.id, projectId: project.id)
+                    }
+                } label: {
+                    HStack {
+                        Text(project.name)
+                        if project.id == appState.selectedProject?.id {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+
+            if appState.projectStore.projects.isEmpty {
+                Text("No projects — add in Settings")
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 7))
+                Text(appState.selectedProject?.name ?? "No project")
+                    .font(.system(size: 9, weight: .medium))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 6, weight: .bold))
+            }
+            .foregroundStyle(appState.selectedProject != nil ? .orange : .secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background((appState.selectedProject != nil ? Color.orange : Color.gray).opacity(0.12))
+            .clipShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
     }
 
     // MARK: - Visible Messages
@@ -519,23 +616,40 @@ struct ThreadToastView: View {
             .help("Capture screenshot")
 
             // Text input
-            TextField("Add context or send to analyze…", text: $inputText)
+            TextField("Message… (⏎ execute, ⇧⏎ analyze)", text: $inputText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 11))
                 .onSubmit {
-                    submitInput()
+                    if NSEvent.modifierFlags.contains(.shift) {
+                        submitInput()
+                    } else {
+                        submitDirectExecute()
+                    }
                 }
 
-            // Send button
+            // Analyze button (shift+enter)
             Button {
                 submitInput()
             } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 18))
+                Image(systemName: "brain.head.profile")
+                    .font(.system(size: 16))
                     .foregroundStyle(canSend ? Color.blue : Color.gray.opacity(0.4))
             }
             .buttonStyle(.plain)
             .disabled(!canSend)
+            .help("Analyze first (Shift+Enter)")
+
+            // Direct execute button (primary — Enter)
+            Button {
+                submitDirectExecute()
+            } label: {
+                Image(systemName: "bolt.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(canSend ? Color.orange : Color.gray.opacity(0.4))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSend)
+            .help("Execute directly (Enter)")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -558,11 +672,20 @@ struct ThreadToastView: View {
         let text = inputText.trimmingCharacters(in: .whitespaces)
         inputText = ""
         if text.isEmpty {
-            // Send with just accumulated context (blind deduction)
             appState.sendToHaiku()
         } else {
-            // Send with user message
             appState.sendMessage(text)
+        }
+    }
+
+    private func submitDirectExecute() {
+        let text = inputText.trimmingCharacters(in: .whitespaces)
+        inputText = ""
+        onDirectExecute()
+        if text.isEmpty {
+            appState.directExecute()
+        } else {
+            appState.directExecuteMessage(text)
         }
     }
 }
