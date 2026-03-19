@@ -6,6 +6,7 @@ enum WorkflowEventType: String, Codable {
     case appSwitch      // User switched to a different app
     case clipboard      // User copied something
     case screenshot     // Periodic or trigger-based screenshot
+    case click          // Mouse click with OCR context of what was clicked
     case idle           // Gap in activity (>30s no events)
 }
 
@@ -20,6 +21,7 @@ struct WorkflowEvent: Identifiable, Codable {
     let description: String
     let data: String?            // clipboard content, URL, etc.
     let screenshotPath: String?  // path to screenshot if captured
+    let ocrContext: String?      // OCR text near cursor + ambient screen text
 
     /// Elapsed seconds from recording start (set by recorder)
     var elapsed: TimeInterval = 0
@@ -31,6 +33,7 @@ struct WorkflowEvent: Identifiable, Codable {
         description: String,
         data: String? = nil,
         screenshotPath: String? = nil,
+        ocrContext: String? = nil,
         elapsed: TimeInterval = 0
     ) {
         self.id = UUID()
@@ -41,6 +44,7 @@ struct WorkflowEvent: Identifiable, Codable {
         self.description = description
         self.data = data
         self.screenshotPath = screenshotPath
+        self.ocrContext = ocrContext
         self.elapsed = elapsed
     }
 

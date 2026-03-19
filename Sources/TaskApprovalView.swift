@@ -363,7 +363,39 @@ struct ThreadToastView: View {
             learnEventRow(event)
         case .workflowSaved(_, let workflow, _):
             workflowSavedRow(workflow)
+        case .frictionOffer(_, let signal, _):
+            frictionOfferCard(signal)
         }
+    }
+
+    private func frictionOfferCard(_ signal: FrictionDetector.FrictionSignal) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkles").font(.system(size: 9)).foregroundStyle(.yellow)
+                Text("ARIA").font(.system(size: 9, weight: .bold)).foregroundStyle(.yellow)
+                Spacer()
+                Text(signal.involvedApps.joined(separator: " → "))
+                    .font(.system(size: 8)).foregroundStyle(.tertiary)
+            }
+            Text(signal.suggestion)
+                .font(.system(size: 10))
+                .foregroundStyle(.primary)
+            HStack(spacing: 6) {
+                if signal.isActionable {
+                    Button("Do it") { appState.acceptFrictionOffer(signal) }
+                        .buttonStyle(.borderedProminent).tint(.yellow).controlSize(.mini)
+                } else {
+                    Button("Find integration") { appState.discoverCapability(for: signal) }
+                        .buttonStyle(.borderedProminent).tint(.blue).controlSize(.mini)
+                }
+                Button("Dismiss") { appState.dismissFriction() }
+                    .buttonStyle(.bordered).controlSize(.mini)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.yellow.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func clipboardBubble(id: UUID, content: String, app: String, window: String) -> some View {
@@ -1107,7 +1139,7 @@ struct ThreadToastView: View {
                 .frame(minWidth: 32, alignment: .leading)
 
             Circle()
-                .fill(event.type == .clipboard ? Color.yellow : Color.white.opacity(0.14))
+                .fill(event.type == .clipboard ? Color.yellow : event.type == .click ? Color.cyan : Color.white.opacity(0.14))
                 .frame(width: 6, height: 6)
                 .padding(.top, 4)
 

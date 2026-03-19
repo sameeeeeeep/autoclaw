@@ -708,6 +708,62 @@ struct SessionThreadView: View {
             .padding(.horizontal, 8).padding(.vertical, 4)
             .background(Color.green.opacity(0.06))
             .clipShape(RoundedRectangle(cornerRadius: 6))
+
+        case .frictionOffer(_, let signal, _):
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.yellow)
+                    Text("ARIA")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.yellow)
+                    Spacer()
+                    Text(signal.involvedApps.joined(separator: " → "))
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                }
+
+                Text(signal.suggestion)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.primary)
+
+                if signal.isActionable {
+                    HStack(spacing: 8) {
+                        Button("Yes, do it") {
+                            appState.acceptFrictionOffer(signal)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.yellow)
+                        .controlSize(.small)
+
+                        Button("Dismiss") {
+                            appState.dismissFriction()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        Button("Search for integration") {
+                            appState.discoverCapability(for: signal)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.blue)
+                        .controlSize(.small)
+
+                        Button("Not now") {
+                            appState.dismissFriction()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.yellow.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
 

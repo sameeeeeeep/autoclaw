@@ -42,6 +42,13 @@ final class AppState: ObservableObject {
     let workflowStore = WorkflowStore()
     let voiceService = VoiceService()
 
+    // MARK: - ARIA Intelligence Layer
+    let capabilityMap = CapabilityMap()
+    let fileActivityMonitor = FileActivityMonitor()
+    private(set) var frictionDetector: FrictionDetector!
+    private(set) var capabilityDiscovery: CapabilityDiscovery!
+    private(set) var keyFrameAnalyzer: KeyFrameAnalyzer!
+
     // MARK: - Model & Project Preferences
     @Published var selectedModel: ClaudeModel {
         didSet { UserDefaults.standard.set(selectedModel.rawValue, forKey: "autoclaw_selected_model") }
@@ -112,6 +119,9 @@ final class AppState: ObservableObject {
     @Published var liveTranscript = ""
     @Published var pendingVoiceText = ""  // accumulated transcript, user edits + sends
 
+    // MARK: - ARIA Friction Detection
+    @Published var activeFriction: FrictionDetector.FrictionSignal?
+
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
@@ -129,8 +139,17 @@ final class AppState: ObservableObject {
             self.selectedProject = projectStore.projects.first(where: { $0.id == uuid })
         }
 
+        // Initialize ARIA intelligence layer
+        self.frictionDetector = FrictionDetector(capabilityMap: capabilityMap)
+        self.capabilityDiscovery = CapabilityDiscovery(runner: claudeCodeRunner, capabilityMap: capabilityMap)
+        self.keyFrameAnalyzer = KeyFrameAnalyzer(runner: claudeCodeRunner, captureStream: workflowRecorder.captureStream)
+
+        // Connect key frame analyzer to friction detector for richer context
+        frictionDetector.keyFrameAnalyzer = keyFrameAnalyzer
+
         setupBindings()
         setupVoice()
+        setupARIA()
     }
 
     private func setupVoice() {
@@ -154,6 +173,41 @@ final class AppState: ObservableObject {
                 self.showThread = true
                 self.statusLine = "Voice captured"
                 print("[Autoclaw] Voice transcript → input: \(text.prefix(60))")
+            }
+        }
+    }
+
+    private func setupARIA() {
+        // Scan installed MCP tools to build the capability map
+        capabilityMap.scanInstalledTools()
+
+        // Wire file activity monitor into friction detector + key frame analyzer
+        fileActivityMonitor.onFileEvent = { [weak self] fileEvent in
+            self?.frictionDetector.recordFileEvent(fileEvent)
+            self?.keyFrameAnalyzer.onFileEvent(app: fileEvent.sourceApp ?? "unknown")
+        }
+
+        // Wire friction detection → surface offers to user
+        frictionDetector.onFrictionDetected = { [weak self] signal in
+            guard let self = self, self.sessionActive else { return }
+            self.activeFriction = signal
+
+            // Surface as a thread message (Gate 0: "I noticed X, want me to help?")
+            self.threadMessages.append(.frictionOffer(signal: signal))
+            self.showThread = true
+            self.statusLine = signal.suggestion
+
+            print("[Autoclaw/ARIA] Friction detected: \(signal.description)")
+
+            // If no installed capability, trigger discovery in background
+            if !signal.isActionable, signal.involvedApps.count >= 2 {
+                Task {
+                    let _ = await self.capabilityDiscovery.discover(
+                        sourceApp: signal.involvedApps[0],
+                        targetApp: signal.involvedApps[1],
+                        frictionDescription: signal.description
+                    )
+                }
             }
         }
     }
@@ -190,16 +244,35 @@ final class AppState: ObservableObject {
         guard sessionActive, !app.isEmpty else { return }
         let window = activeWindowTitle
 
-        // Forward to learn recorder if active
-        forwardToRecorderIfNeeded(app: app, window: window)
+        // Use resolved web app name instead of raw browser name
+        let effectiveApp = activeWindowService.effectiveAppName
+        let effectiveSection = activeWindowService.effectiveSection
+        let url = activeWindowService.browserURL
 
-        // Replace existing context message or add new one
+        // Forward to learn recorder if active (uses effective app name)
+        forwardToRecorderIfNeeded(app: effectiveApp, window: window)
+
+        // Feed the friction detector
+        frictionDetector.recordAppSwitch(
+            app: effectiveApp,
+            section: effectiveSection,
+            url: url.isEmpty ? nil : url
+        )
+
+        // Capture key frame on app switch for richer context
+        keyFrameAnalyzer.onAppSwitch(app: effectiveApp)
+
+        // Update file activity monitor's app context
+        fileActivityMonitor.updateActiveApp(effectiveApp)
+
+        // Replace existing context message or add new one (show resolved app name)
+        let displayApp = effectiveApp
         if let idx = threadMessages.lastIndex(where: {
             if case .context = $0 { return true }; return false
         }) {
-            threadMessages[idx] = .context(app: app, window: window)
+            threadMessages[idx] = .context(app: displayApp, window: window)
         } else {
-            threadMessages.append(.context(app: app, window: window))
+            threadMessages.append(.context(app: displayApp, window: window))
         }
     }
 
@@ -230,9 +303,16 @@ final class AppState: ObservableObject {
             currentThread = sessionStore.createThread(sessionId: sid, projectId: projectId)
         }
 
+        // Start ARIA passive observation
+        let projectId = selectedProject?.id ?? UUID()
+        workflowRecorder.startPassiveObserving(projectId: projectId)
+        fileActivityMonitor.start()
+        keyFrameAnalyzer.start()
+
         // Add initial context chip and show toast immediately
-        if !activeApp.isEmpty {
-            threadMessages.append(.context(app: activeApp, window: activeWindowTitle))
+        let effectiveApp = activeWindowService.effectiveAppName
+        if !effectiveApp.isEmpty {
+            threadMessages.append(.context(app: effectiveApp, window: activeWindowTitle))
         }
         showThread = true
 
@@ -305,6 +385,13 @@ final class AppState: ObservableObject {
             isLearnRecording = false
         }
 
+        // Stop ARIA passive observation
+        workflowRecorder.stopPassiveObserving()
+        fileActivityMonitor.stop()
+        keyFrameAnalyzer.stop()
+        keyFrameAnalyzer.cleanup()
+        activeFriction = nil
+
         sessionActive = false
         sessionPaused = false
         currentSuggestion = nil
@@ -369,12 +456,26 @@ final class AppState: ObservableObject {
     private func handleClipboardChange(_ content: String) {
         guard sessionActive, !isDeducing, !isExecuting else { return }
 
+        // Use resolved app name for clipboard source
+        let effectiveApp = activeWindowService.effectiveAppName
+        let effectiveSection = activeWindowService.effectiveSection
+
         lastClipboard = content
-        clipboardCapturedApp = activeApp
+        clipboardCapturedApp = effectiveApp
         clipboardCapturedWindow = activeWindowTitle
 
         // Forward to learn recorder if active
-        forwardClipboardToRecorderIfNeeded(content: content, app: activeApp, window: activeWindowTitle)
+        forwardClipboardToRecorderIfNeeded(content: content, app: effectiveApp, window: activeWindowTitle)
+
+        // Feed the friction detector
+        frictionDetector.recordClipboard(
+            content: content,
+            sourceApp: effectiveApp,
+            sourceSection: effectiveSection
+        )
+
+        // Capture key frame on clipboard for context
+        keyFrameAnalyzer.onClipboard(app: effectiveApp)
 
         if selectedProject == nil {
             // Auto-select the only project if there's exactly one
@@ -784,6 +885,19 @@ final class AppState: ObservableObject {
         isLearnRecording = true
         statusLine = "Recording workflow..."
         showThread = true
+
+        // Observe recorder events to forward clicks to the thread
+        workflowRecorder.$events
+            .removeDuplicates { $0.count == $1.count }
+            .dropFirst()
+            .sink { [weak self] events in
+                guard let self = self, self.isLearnRecording else { return }
+                if let lastEvent = events.last, lastEvent.type == .click {
+                    self.threadMessages.append(.learnEvent(event: lastEvent))
+                }
+            }
+            .store(in: &cancellables)
+
         print("[Autoclaw] Learn recording started")
     }
 
@@ -810,7 +924,8 @@ final class AppState: ObservableObject {
                 let steps = try await WorkflowExtractor.extractSteps(
                     from: recording,
                     using: claudeCodeRunner,
-                    model: .haiku
+                    model: .sonnet,
+                    savedWorkflows: self.workflowStore.workflows
                 )
                 self.extractedSteps = steps
                 self.statusLine = "\(steps.count) steps extracted"
@@ -929,6 +1044,84 @@ final class AppState: ObservableObject {
 
         if let lastEvent = workflowRecorder.events.last {
             threadMessages.append(.learnEvent(event: lastEvent))
+        }
+    }
+
+    // MARK: - ARIA Friction Actions
+
+    func dismissFriction() {
+        activeFriction = nil
+        frictionDetector.dismissFriction()
+    }
+
+    /// User accepted a friction offer — execute the suggested automation
+    func acceptFrictionOffer(_ signal: FrictionDetector.FrictionSignal) {
+        guard let project = selectedProject else { return }
+        activeFriction = nil
+        frictionDetector.dismissFriction()
+
+        // Build a prompt that uses the matched capability
+        let capName = signal.capability?.name ?? "available tools"
+        let prompt = """
+        The user was manually \(signal.description). \
+        Use \(capName) to automate this. \
+        Apps involved: \(signal.involvedApps.joined(separator: ", ")).
+        """
+
+        threadMessages.append(.userMessage(text: "Automate: \(signal.description)"))
+
+        isExecuting = true
+        executionOutput = ""
+        statusLine = "Automating..."
+
+        executionTask = Task {
+            do {
+                for try await chunk in claudeCodeRunner.executeDirect(
+                    prompt: prompt,
+                    project: project,
+                    model: selectedModel,
+                    sessionId: currentSessionId
+                ) {
+                    guard !Task.isCancelled else { break }
+                    self.executionOutput += chunk
+                }
+                if !Task.isCancelled {
+                    self.threadMessages.append(.execution(output: self.executionOutput))
+                }
+            } catch {
+                if !Task.isCancelled {
+                    let errMsg = error.localizedDescription
+                    self.threadMessages.append(.error(message: errMsg))
+                }
+            }
+            self.isExecuting = false
+            self.executionTask = nil
+            self.statusLine = "Done"
+        }
+    }
+
+    /// User wants to discover capabilities for a friction pattern
+    func discoverCapability(for signal: FrictionDetector.FrictionSignal) {
+        guard signal.involvedApps.count >= 2 else { return }
+        activeFriction = nil
+        frictionDetector.dismissFriction()
+        statusLine = "Searching for integrations..."
+
+        Task {
+            let result = await capabilityDiscovery.discover(
+                sourceApp: signal.involvedApps[0],
+                targetApp: signal.involvedApps[1],
+                frictionDescription: signal.description
+            )
+
+            if let result = result, !result.findings.isEmpty {
+                let names = result.findings.map(\.name).joined(separator: ", ")
+                self.threadMessages.append(.userMessage(text: "Found integrations: \(names)"))
+                self.statusLine = "Found \(result.findings.count) integrations"
+            } else {
+                self.threadMessages.append(.error(message: "No integrations found for \(signal.involvedApps.joined(separator: " → "))"))
+                self.statusLine = "No integrations found"
+            }
         }
     }
 

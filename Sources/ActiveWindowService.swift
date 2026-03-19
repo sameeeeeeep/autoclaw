@@ -7,6 +7,19 @@ final class ActiveWindowService: ObservableObject {
     @Published var windowTitle = ""
     @Published var browserURL = ""  // active tab URL for Chrome/Safari/Arc
 
+    /// Resolved web app identity — "Google Chrome" becomes "Notion", "Figma", etc.
+    @Published var resolvedApp: WebAppResolver.ResolvedApp?
+
+    /// The effective app name — resolved web app name if in browser, otherwise native app name
+    var effectiveAppName: String {
+        resolvedApp?.appName ?? appName
+    }
+
+    /// The effective section within the app (if detectable)
+    var effectiveSection: String? {
+        resolvedApp?.section
+    }
+
     private var timer: Timer?
 
     func start() {
@@ -45,8 +58,15 @@ final class ActiveWindowService: ObservableObject {
         let browserApps = ["Google Chrome", "Safari", "Arc"]
         if browserApps.contains(appName) {
             browserURL = Self.getBrowserURL(for: appName) ?? ""
+            // Resolve the URL to a web app identity
+            if !browserURL.isEmpty {
+                resolvedApp = WebAppResolver.resolve(url: browserURL)
+            } else {
+                resolvedApp = nil
+            }
         } else {
             browserURL = ""
+            resolvedApp = nil
         }
     }
 

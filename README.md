@@ -17,32 +17,46 @@ Autoclaw is a macOS menu bar app that brings always-on intelligence to your desk
 **Agentic Reality Interface Architecture** — Autoclaw is the first implementation of ARIA, a pattern where AI agents operate at the OS interface layer rather than inside individual applications.
 
 ```
-┌─────────────────────────────────────────────┐
-│  Your Desktop                               │
-│  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐       │
-│  │Slack │ │Chrome│ │VS    │ │Mail  │ ...    │
-│  │      │ │      │ │Code  │ │      │       │
-│  └──────┘ └──────┘ └──────┘ └──────┘       │
-│         ▲           ▲           ▲           │
-│         │  clipboard │  context  │           │
-│         └─────┬──────┴─────┬─────┘           │
-│               ▼            ▼                 │
-│  ┌─────────────────────────────────────┐     │
-│  │  Autoclaw (menu bar)               │     │
-│  │  ┌─────────┐  ┌──────────────────┐ │     │
-│  │  │ Observe │→│ Understand → Act  │ │     │
-│  │  └─────────┘  └──────────────────┘ │     │
-│  │         ↕            ↕              │     │
-│  │  ┌──────────────────────────────┐   │     │
-│  │  │ Connectors (MCP)            │   │     │
-│  │  │ ClickUp · Granola · Sheets  │   │     │
-│  │  │ GitHub · Web · Filesystem   │   │     │
-│  │  └──────────────────────────────┘   │     │
-│  └─────────────────────────────────────┘     │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  Your Desktop                                            │
+│  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐           │
+│  │Slack │ │Chrome│ │VS    │ │Figma │ │Mail  │  ...       │
+│  └──────┘ └──────┘ └──────┘ └──────┘ └──────┘           │
+│       │         │        │        │        │             │
+│       └────┬────┴────┬───┴────┬───┴────┬───┘             │
+│            ▼         ▼        ▼        ▼                 │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │  Perception Layer                                │    │
+│  │  Clipboard · URLs · App Switches · Files · Frames│    │
+│  └─────────────────────┬────────────────────────────┘    │
+│                        ▼                                 │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │  ARIA Intelligence Layer                         │    │
+│  │  ┌────────────────┐  ┌─────────────────────────┐ │    │
+│  │  │FrictionDetector│→│CapabilityMap + Discovery│ │    │
+│  │  └────────────────┘  └─────────────────────────┘ │    │
+│  │  ┌────────────────┐  ┌─────────────────────────┐ │    │
+│  │  │KeyFrameAnalyzer│  │WebAppResolver           │ │    │
+│  │  └────────────────┘  └─────────────────────────┘ │    │
+│  └─────────────────────┬────────────────────────────┘    │
+│                        ▼                                 │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │  "I can sync Notion → Sheets for you"  [Do it]  │    │
+│  └──────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ## Features
+
+### ARIA Intelligence Layer
+Autoclaw doesn't wait for you to ask. It **watches what you do and tells you what it can automate.**
+
+- **Friction Detection** — recognizes when you're manually moving data between apps, doing repetitive navigation, or switching back and forth to look something up
+- **Capability Matching** — knows what MCP tools and APIs are installed and matches them against the friction it detects
+- **Proactive Offers** — surfaces suggestions like "I noticed you're copying data from Notion to Sheets. I can sync that directly." You approve or dismiss.
+- **Capability Discovery** — when friction is detected but no installed tool covers it, searches the web for MCP servers and integrations that could help
+- **Key Frame Analysis** — captures screenshots at important moments and uses Claude's vision to understand what you're actually doing, not just raw OCR text
+- **Web App Resolution** — knows that "Chrome" really means "Notion", "Figma", "Gmail", etc. based on the URL
 
 ### Session-Based Workflow
 - **Start a session** with Fn key or from the menu bar
@@ -144,16 +158,31 @@ make run
 
 ```
 Sources/
-├── App.swift                 # App entry point
-├── AppDelegate.swift         # Menu bar, window management, state observation
-├── AppState.swift            # Central state — sessions, modes, execution
-├── ClaudeCodeRunner.swift    # Stream-json CLI integration
+├── App.swift                  # App entry point
+├── AppDelegate.swift          # Menu bar, window management, state observation
+├── AppState.swift             # Central state — sessions, modes, ARIA wiring
+├── ClaudeCodeRunner.swift     # Stream-json CLI integration
 ├── TaskDeductionService.swift # Haiku-based task analysis
-├── TaskApprovalView.swift    # Toast UI — thread, input, mode selector
-├── MainPanelView.swift       # Panel — home, threads, settings
-├── PillView.swift            # Side widget with intelligence glow
-├── GlobalHotkeyMonitor.swift # Fn, Option, keyboard shortcuts
-├── SessionThread.swift       # Session persistence
+├── TaskApprovalView.swift     # Toast UI — thread, input, mode selector
+├── MainPanelView.swift        # Panel — home, threads, settings
+├── PillView.swift             # Side widget with intelligence glow
+├── GlobalHotkeyMonitor.swift  # Fn, Option, keyboard shortcuts
+├── SessionThread.swift        # Session persistence
+│
+│   ARIA Intelligence Layer
+├── FrictionDetector.swift     # Detects automation opportunities from live activity
+├── CapabilityMap.swift        # Indexes installed MCP tools and what they can do
+├── CapabilityDiscovery.swift  # Web search for new integrations
+├── KeyFrameAnalyzer.swift     # Vision-based screen context understanding
+├── WebAppResolver.swift       # Maps browser URLs to semantic app identities
+├── FileActivityMonitor.swift  # Watches file system for cross-app transfers
+│
+│   Perception
+├── ActiveWindowService.swift  # App, window, URL tracking with web app resolution
+├── ClipboardMonitor.swift     # Clipboard polling
+├── ScreenCaptureStream.swift  # Low-fps screen capture with rolling frame buffer
+├── ScreenOCR.swift            # Apple Vision OCR with cursor proximity ranking
+├── WorkflowRecorder.swift     # Passive always-on event recording during sessions
 └── ...
 ```
 
