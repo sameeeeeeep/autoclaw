@@ -673,6 +673,41 @@ struct SessionThreadView: View {
             .padding(.horizontal, 6).padding(.vertical, 3)
             .background(Color.purple.opacity(0.08))
             .clipShape(Capsule())
+
+        case .learnEvent(_, let event, _):
+            HStack(spacing: 6) {
+                Text(event.elapsedFormatted)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                Circle().fill(Color.yellow.opacity(0.5)).frame(width: 5, height: 5)
+                Text(event.description)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer()
+                if !event.app.isEmpty {
+                    Text(event.app)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+        case .workflowSaved(_, let workflow, _):
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.green)
+                Text("Workflow: \(workflow.name)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.green)
+                Spacer()
+                Text("\(workflow.steps.count) steps")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Color.green.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
     }
 

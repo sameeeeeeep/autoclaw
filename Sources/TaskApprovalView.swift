@@ -7,6 +7,7 @@ enum RequestMode: String, CaseIterable, Identifiable {
     case addToTasks = "Add to Tasks"
     case question = "Question"
     case analyze = "Analyze"
+    case learn = "Learn"
 
     var id: String { rawValue }
 
@@ -16,6 +17,7 @@ enum RequestMode: String, CaseIterable, Identifiable {
         case .addToTasks: return "plus.circle"
         case .question:   return "questionmark.bubble"
         case .analyze:    return "sparkle.magnifyingglass"
+        case .learn:      return "eye.fill"
         }
     }
 
@@ -25,6 +27,7 @@ enum RequestMode: String, CaseIterable, Identifiable {
         case .addToTasks: return .orange
         case .question:   return .purple
         case .analyze:    return .cyan
+        case .learn:      return .yellow
         }
     }
 
@@ -34,6 +37,7 @@ enum RequestMode: String, CaseIterable, Identifiable {
         case .addToTasks: return "What should be added?"
         case .question:   return "Ask a question…"
         case .analyze:    return "What should I analyze?"
+        case .learn:      return "Tap record to learn a workflow…"
         }
     }
 }
@@ -95,6 +99,26 @@ struct ThreadToastView: View {
                                 .id(msg.id)
                         }
 
+                        // Voice Mode: live transcription bar
+                        if appState.isVoiceListening {
+                            voiceListeningBar
+                        }
+
+                        // Learn Mode: recording bar
+                        if appState.isLearnRecording {
+                            learnRecordingBar
+                        }
+
+                        // Learn Mode: extracting steps indicator
+                        if appState.isExtractingSteps {
+                            extractingStepsView
+                        }
+
+                        // Learn Mode: save workflow card (after extraction)
+                        if appState.currentRecording != nil && !appState.extractedSteps.isEmpty && !appState.isExtractingSteps {
+                            saveWorkflowCard
+                        }
+
                         if appState.isDeducing {
                             thinkingIndicator
                         }
@@ -130,6 +154,17 @@ struct ThreadToastView: View {
         }
         .frame(width: 320)
         .intelligenceGlow(color: glowColor, cornerRadius: 12, state: glowState)
+        .onChange(of: appState.pendingVoiceText) { newText in
+            // Populate input field with voice transcript for user to review/edit/send
+            if !newText.isEmpty {
+                if inputText.isEmpty {
+                    inputText = newText
+                } else {
+                    inputText += " " + newText
+                }
+                appState.pendingVoiceText = ""
+            }
+        }
     }
 
     // MARK: - Session State
@@ -324,6 +359,10 @@ struct ThreadToastView: View {
             contextChips(app: app, window: window)
         case .attachment(_, _, let name, let size, _):
             attachmentChip(name: name, size: size)
+        case .learnEvent(_, let event, _):
+            learnEventRow(event)
+        case .workflowSaved(_, let workflow, _):
+            workflowSavedRow(workflow)
         }
     }
 
@@ -758,6 +797,16 @@ struct ThreadToastView: View {
     }
 
     private var inputBar: some View {
+        Group {
+            if appState.requestMode == .learn {
+                learnInputBar
+            } else {
+                standardInputBar
+            }
+        }
+    }
+
+    private var standardInputBar: some View {
         HStack(spacing: 6) {
             // Screenshot button
             Button {
@@ -789,6 +838,68 @@ struct ThreadToastView: View {
             .buttonStyle(.plain)
             .disabled(!canSend)
             .help("Send (\(appState.requestMode.rawValue))")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    private var learnInputBar: some View {
+        HStack(spacing: 8) {
+            if appState.isLearnRecording {
+                // Recording — show stop + discard
+                Button {
+                    appState.stopLearnRecording()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 8))
+                        Text("Stop + save")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundStyle(.yellow)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Color.yellow.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Button {
+                    appState.discardLearnRecording()
+                } label: {
+                    Text("Discard")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.red.opacity(0.7))
+                }
+                .buttonStyle(.plain)
+            } else {
+                // Not recording — show start button
+                Button {
+                    appState.startLearnRecording()
+                } label: {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 8, height: 8)
+                        Text("Start recording")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Text("Record your workflow to automate it")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -862,7 +973,336 @@ struct ThreadToastView: View {
             // Deduce first via Haiku
             if text.isEmpty { appState.sendToHaiku() }
             else { appState.sendMessage(text) }
+
+        case .learn:
+            // Toggle recording
+            if appState.isLearnRecording {
+                appState.stopLearnRecording()
+            } else {
+                appState.startLearnRecording()
+            }
         }
+    }
+
+    // MARK: - Voice Mode
+
+    private var voiceListeningBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                // Pulsing red mic dot
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 7, height: 7)
+                    .opacity(voicePulse ? 1.0 : 0.3)
+                    .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: voicePulse)
+                    .onAppear { voicePulse = true }
+                    .onDisappear { voicePulse = false }
+
+                Text("voice")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.red)
+
+                Spacer()
+
+                Button {
+                    appState.toggleVoice()
+                } label: {
+                    Text("stop")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.red)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 3)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7)
+                                .stroke(Color.red.opacity(0.3), lineWidth: 0.5)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Live transcript preview
+            if !appState.liveTranscript.isEmpty {
+                Text(appState.liveTranscript)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.primary.opacity(0.8))
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("Listening…")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .italic()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.red.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11)
+                .stroke(Color.red.opacity(0.2), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 11))
+    }
+
+    @State private var voicePulse = false
+
+    // MARK: - Learn Mode Recording Bar
+
+    private var learnRecordingBar: some View {
+        HStack(spacing: 8) {
+            // Pulsing amber dot
+            Circle()
+                .fill(Color.yellow)
+                .frame(width: 7, height: 7)
+                .opacity(recordingPulse ? 1.0 : 0.3)
+                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: recordingPulse)
+                .onAppear { recordingPulse = true }
+                .onDisappear { recordingPulse = false }
+
+            Text("recording workflow")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.yellow)
+
+            Spacer()
+
+            Text(appState.workflowRecorder.elapsedFormatted)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.yellow.opacity(0.45))
+
+            Button {
+                appState.stopLearnRecording()
+            } label: {
+                Text("stop")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.yellow)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 3)
+                    .background(Color.clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(Color.yellow.opacity(0.3), lineWidth: 0.5)
+                    )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.yellow.opacity(0.1))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11)
+                .stroke(Color.yellow.opacity(0.25), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 11))
+    }
+
+    @State private var recordingPulse = false
+
+    // MARK: - Learn Event Row
+
+    private func learnEventRow(_ event: WorkflowEvent) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Text(event.elapsedFormatted)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .frame(minWidth: 32, alignment: .leading)
+
+            Circle()
+                .fill(event.type == .clipboard ? Color.yellow : Color.white.opacity(0.14))
+                .frame(width: 6, height: 6)
+                .padding(.top, 4)
+
+            Text(event.description)
+                .font(.system(size: 11))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+
+            Spacer()
+
+            if !event.app.isEmpty {
+                Text(event.app)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.white.opacity(0.05))
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    // MARK: - Save Workflow Card
+
+    private var saveWorkflowCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Header
+            HStack(spacing: 6) {
+                Text("\(appState.extractedSteps.count) steps extracted")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Color.green.opacity(0.18))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+
+                Spacer()
+
+                Text("save workflow?")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.primary)
+            }
+
+            // Description
+            Text("Name and save to run again in one tap")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+
+            // Step list
+            VStack(spacing: 0) {
+                ForEach(appState.extractedSteps) { step in
+                    HStack(spacing: 8) {
+                        // Step number circle
+                        ZStack {
+                            Circle()
+                                .fill(Color.white.opacity(0.08))
+                                .frame(width: 18, height: 18)
+                            Text("\(step.index)")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+
+                        Text(step.description)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+
+                        Spacer()
+
+                        // Tool badge
+                        Text(step.tool)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Color.white.opacity(0.05))
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                    }
+                    .padding(.vertical, 6)
+
+                    if step.id != appState.extractedSteps.last?.id {
+                        Divider().opacity(0.15)
+                    }
+                }
+            }
+
+            // Workflow name input
+            TextField("Workflow name", text: $appState.workflowNameDraft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.white.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.white.opacity(0.11), lineWidth: 0.5)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            // Action buttons
+            HStack(spacing: 7) {
+                Button {
+                    appState.saveWorkflow(name: appState.workflowNameDraft)
+                } label: {
+                    Text("Save workflow")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 5)
+                        .background(Color.white.opacity(0.88))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    // TODO: Edit steps view
+                } label: {
+                    Text("Edit steps")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.white.opacity(0.11), lineWidth: 0.5)
+                        )
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Button {
+                    appState.discardLearnRecording()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(13)
+        .background(Color.white.opacity(0.03))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11)
+                .stroke(Color.white.opacity(0.11), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 11))
+    }
+
+    // MARK: - Extracting Steps Indicator
+
+    private var extractingStepsView: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.mini)
+                .scaleEffect(0.7)
+            Text("Extracting workflow steps…")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.yellow)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.yellow.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    // MARK: - Workflow Saved Confirmation
+
+    private func workflowSavedRow(_ workflow: SavedWorkflow) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(.green)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Workflow saved")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.green)
+                Text("\(workflow.name) — \(workflow.steps.count) steps")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Text(workflow.totalEstimatedFormatted)
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(10)
+        .background(Color.green.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 

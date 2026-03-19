@@ -5,9 +5,11 @@ import os
 private let logger = Logger(subsystem: "com.autoclaw.app", category: "Hotkey")
 
 /// Monitors for global hotkeys to control sessions.
-/// - Double-tap Left Option (⌥): end session
-/// - Option + Z: screenshot to thread
-/// - Single Fn tap: pause/unpause session (only if System Settings > Keyboard > "Press fn key to" = "Do Nothing")
+/// - Single Fn tap: start session (if off) / cycle mode (if on)
+/// - Double-tap Left Option (⌥): pause/resume session
+/// - Double-tap Caps Lock: toggle voice mode (transcription)
+/// - Option + Z: dismiss toast without ending session
+/// - Option + X: cycle request mode
 final class GlobalHotkeyMonitor {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -21,6 +23,7 @@ final class GlobalHotkeyMonitor {
     private var onEnd: () -> Void
     private var onScreenshot: () -> Void
     private var onCycleMode: () -> Void
+    private var onVoiceToggle: () -> Void
 
     // Fn tracking
     private var fnDown = false
@@ -31,6 +34,9 @@ final class GlobalHotkeyMonitor {
     private var leftOptionDown = false
     private var leftOptionConsumed = false  // set when Left⌥+Space fires, suppresses end on release
 
+    // Double-tap tracking (Caps Lock — voice mode)
+    private var lastCapsLockToggleTime: CFAbsoluteTime = 0
+
     private let doubleTapWindow: CFAbsoluteTime = 0.35
 
     // Debounce
@@ -39,13 +45,15 @@ final class GlobalHotkeyMonitor {
     private var lastEndTime: CFAbsoluteTime = 0
     private var lastScreenshotTime: CFAbsoluteTime = 0
     private var lastCycleModeTime: CFAbsoluteTime = 0
+    private var lastVoiceToggleTime: CFAbsoluteTime = 0
 
-    init(onToggle: @escaping () -> Void, onPause: @escaping () -> Void, onEnd: @escaping () -> Void, onScreenshot: @escaping () -> Void = {}, onCycleMode: @escaping () -> Void = {}) {
+    init(onToggle: @escaping () -> Void, onPause: @escaping () -> Void, onEnd: @escaping () -> Void, onScreenshot: @escaping () -> Void = {}, onCycleMode: @escaping () -> Void = {}, onVoiceToggle: @escaping () -> Void = {}) {
         self.onToggle = onToggle
         self.onPause = onPause
         self.onEnd = onEnd
         self.onScreenshot = onScreenshot
         self.onCycleMode = onCycleMode
+        self.onVoiceToggle = onVoiceToggle
     }
 
     static func debugLog(_ msg: String) {
@@ -178,6 +186,17 @@ final class GlobalHotkeyMonitor {
                 leftOptionConsumed = false
             }
         }
+
+        // --- Double-tap Caps Lock (keyCode 57 = kVK_CapsLock) → voice mode ---
+        if keyCode == 57 {
+            let now = CFAbsoluteTimeGetCurrent()
+            if now - lastCapsLockToggleTime < doubleTapWindow {
+                lastCapsLockToggleTime = 0
+                fireVoiceToggle(source: "Double-tap Caps Lock (CGEvent)")
+            } else {
+                lastCapsLockToggleTime = now
+            }
+        }
     }
 
     private func handleCGKeyDown(keyCode: Int64, flags: CGEventFlags) {
@@ -236,6 +255,17 @@ final class GlobalHotkeyMonitor {
                 leftOptionConsumed = false
             }
         }
+
+        // --- Double-tap Caps Lock (keyCode 57) → voice mode ---
+        if event.keyCode == 57 {
+            let now = CFAbsoluteTimeGetCurrent()
+            if now - lastCapsLockToggleTime < doubleTapWindow {
+                lastCapsLockToggleTime = 0
+                fireVoiceToggle(source: "Double-tap Caps Lock (NSEvent)")
+            } else {
+                lastCapsLockToggleTime = now
+            }
+        }
     }
 
     private func handleNSKeyDown(_ event: NSEvent) {
@@ -291,6 +321,14 @@ final class GlobalHotkeyMonitor {
         lastCycleModeTime = now
         logger.info("Cycle mode hotkey (\(source, privacy: .public))")
         DispatchQueue.main.async { self.onCycleMode() }
+    }
+
+    private func fireVoiceToggle(source: String) {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now - lastVoiceToggleTime > 0.5 else { return }
+        lastVoiceToggleTime = now
+        logger.info("Voice toggle hotkey (\(source, privacy: .public))")
+        DispatchQueue.main.async { self.onVoiceToggle() }
     }
 
     func stop() {

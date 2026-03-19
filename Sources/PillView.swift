@@ -310,14 +310,21 @@ struct SidebarView: View {
     private var modeBar: some View {
         HStack(spacing: 0) {
             ForEach(PillMode.allCases, id: \.self) { mode in
-                Button { pillMode = mode } label: {
+                Button {
+                    pillMode = mode
+                    // Wire PillMode.learn to RequestMode.learn
+                    if mode == .learn {
+                        appState.requestMode = .learn
+                        appState.showThread = true
+                    }
+                } label: {
                     Image(systemName: mode.icon)
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(pillMode == mode ? Ap.textPrimary : Ap.modeOff)
+                        .foregroundColor(pillMode == mode ? (mode == .learn && appState.isLearnRecording ? Color.yellow : Ap.textPrimary) : Ap.modeOff)
                         .frame(maxWidth: .infinity).frame(height: 28)
                         .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(pillMode == mode ? Ap.modeBgAct : .clear)
-                            .overlay(pillMode == mode ? RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Ap.modeBorderAct, lineWidth: 1) : nil))
+                            .fill(pillMode == mode ? (mode == .learn && appState.isLearnRecording ? Color.yellow.opacity(0.15) : Ap.modeBgAct) : .clear)
+                            .overlay(pillMode == mode ? RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(mode == .learn && appState.isLearnRecording ? Color.yellow.opacity(0.4) : Ap.modeBorderAct, lineWidth: 1) : nil))
                         .contentShape(Rectangle())
                 }.buttonStyle(.plain)
             }
@@ -355,6 +362,21 @@ struct SidebarView: View {
                 .lineLimit(1)
                 .animation(.easeInOut(duration: 0.2), value: appState.statusLine)
 
+            // Learn mode: recording info
+            if appState.isLearnRecording {
+                HStack(spacing: 4) {
+                    Circle().fill(Color.yellow).frame(width: 5, height: 5)
+                    Text("\(appState.workflowRecorder.events.count) events")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundColor(.yellow.opacity(0.7))
+                    Text("·")
+                        .foregroundColor(Ap.textDim)
+                    Text(appState.workflowRecorder.elapsedFormatted)
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundColor(.yellow.opacity(0.5))
+                }
+            }
+
             // Spinner when working
             if appState.isDeducing || appState.isExecuting {
                 ProgressView().scaleEffect(0.6)
@@ -391,7 +413,13 @@ struct SidebarView: View {
 
     private var statusIndicator: some View {
         Group {
-            if appState.isExecuting {
+            if appState.isVoiceListening {
+                lbl("VOICE", icon: "mic.fill", c: .red)
+            } else if appState.isLearnRecording {
+                lbl("RECORDING", icon: "eye.fill", c: .yellow)
+            } else if appState.isExtractingSteps {
+                lbl("EXTRACTING", icon: "sparkles", c: .yellow)
+            } else if appState.isExecuting {
                 lbl("EXECUTING", icon: "chevron.left.forwardslash.chevron.right", c: .purple)
             } else if appState.isDeducing {
                 lbl("ANALYZING", icon: "sparkles", c: .cyan)
@@ -412,6 +440,9 @@ struct SidebarView: View {
     }
 
     private var statusColor: Color {
+        if appState.isVoiceListening { return .red.opacity(0.8) }
+        if appState.isLearnRecording { return .yellow.opacity(0.8) }
+        if appState.isExtractingSteps { return .yellow.opacity(0.7) }
         if appState.deductionError != nil { return .red.opacity(0.7) }
         if appState.isExecuting { return .purple.opacity(0.8) }
         if appState.isDeducing { return .cyan.opacity(0.7) }

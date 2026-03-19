@@ -22,5 +22,9 @@
     <string>13.0</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 Autoclaw. All rights reserved.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Autoclaw uses the microphone for voice-to-text transcription in voice mode.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Autoclaw uses speech recognition to transcribe your voice into text for tasks and notes.</string>
 </dict>
 </plist>

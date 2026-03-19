@@ -38,6 +38,9 @@ final class AppState: ObservableObject {
     let claudeCodeRunner = ClaudeCodeRunner()
     let projectStore = ProjectStore()
     let sessionStore = SessionStore()
+    let workflowRecorder = WorkflowRecorder()
+    let workflowStore = WorkflowStore()
+    let voiceService = VoiceService()
 
     // MARK: - Model & Project Preferences
     @Published var selectedModel: ClaudeModel {
@@ -82,6 +85,7 @@ final class AppState: ObservableObject {
     @Published var isExecuting = false
     @Published var executionOutput = ""
     @Published var deductionError: String?
+    var executionTask: Task<Void, Never>?  // cancellable execution task
 
     // MARK: - Clarification Flow
     @Published var pendingClarification: Clarification?
@@ -95,6 +99,18 @@ final class AppState: ObservableObject {
 
     // MARK: - Status (shown in sidebar canvas)
     @Published var statusLine = "Ready"
+
+    // MARK: - Learn Mode
+    @Published var isLearnRecording = false
+    @Published var currentRecording: WorkflowRecording?
+    @Published var extractedSteps: [WorkflowStep] = []
+    @Published var isExtractingSteps = false
+    @Published var workflowNameDraft = ""
+
+    // MARK: - Voice Mode
+    @Published var isVoiceListening = false
+    @Published var liveTranscript = ""
+    @Published var pendingVoiceText = ""  // accumulated transcript, user edits + sends
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -114,6 +130,32 @@ final class AppState: ObservableObject {
         }
 
         setupBindings()
+        setupVoice()
+    }
+
+    private func setupVoice() {
+        // Forward live transcript to published state
+        voiceService.$isListening
+            .assign(to: &$isVoiceListening)
+
+        voiceService.$currentTranscript
+            .assign(to: &$liveTranscript)
+
+        // When transcript is committed, populate the input field for user to review/edit/send
+        voiceService.onTranscriptReady = { [weak self] text in
+            Task { @MainActor in
+                guard let self = self, self.sessionActive else { return }
+                // Append to pending voice text — user presses enter to send
+                if self.pendingVoiceText.isEmpty {
+                    self.pendingVoiceText = text
+                } else {
+                    self.pendingVoiceText += " " + text
+                }
+                self.showThread = true
+                self.statusLine = "Voice captured"
+                print("[Autoclaw] Voice transcript → input: \(text.prefix(60))")
+            }
+        }
     }
 
     private func setupBindings() {
@@ -147,6 +189,9 @@ final class AppState: ObservableObject {
     private func handleContextChange(app: String) {
         guard sessionActive, !app.isEmpty else { return }
         let window = activeWindowTitle
+
+        // Forward to learn recorder if active
+        forwardToRecorderIfNeeded(app: app, window: window)
 
         // Replace existing context message or add new one
         if let idx = threadMessages.lastIndex(where: {
@@ -244,6 +289,22 @@ final class AppState: ObservableObject {
 
     func endSession() {
         let ended = currentSessionId
+
+        // Stop any running execution
+        executionTask?.cancel()
+        executionTask = nil
+
+        // Stop voice if listening
+        if voiceService.isListening {
+            voiceService.stopListening()
+        }
+
+        // Stop learn recording if active
+        if isLearnRecording {
+            workflowRecorder.discardRecording()
+            isLearnRecording = false
+        }
+
         sessionActive = false
         sessionPaused = false
         currentSuggestion = nil
@@ -253,6 +314,8 @@ final class AppState: ObservableObject {
         deductionError = nil
         pendingClarification = nil
         needsProjectSelection = false
+        pendingVoiceText = ""
+        liveTranscript = ""
         currentSessionId = nil
 
         // Keep thread + messages visible so the toast shows "session ended" state
@@ -271,22 +334,47 @@ final class AppState: ObservableObject {
         showThread = false
     }
 
-    /// Resume from the ended session
+    /// Resume from the ended session — keeps existing thread messages & toast visible
     func resumeEndedSession() {
         guard let thread = lastEndedThread else { return }
         lastEndedThread = nil
-        resumeSession(thread: thread)
+
+        // Resume the session WITHOUT clearing messages or toggling showThread
+        sessionActive = true
+        sessionPaused = false
+        currentSessionId = thread.id.uuidString
+        currentThread = thread
+        currentSuggestion = nil
+        executionOutput = ""
+        deductionError = nil
+        pendingClarification = nil
+        needsProjectSelection = false
+        statusLine = "Resumed: \(thread.title)"
+
+        // Set project
+        if let project = projectStore.projects.first(where: { $0.id == thread.projectId }) {
+            selectedProject = project
+        }
+
+        sessionStore.updateThread(id: thread.id)
+
+        // Keep the toast visible — don't toggle showThread off→on
         showThread = true
+
+        print("[Autoclaw] Session resumed from ended state: \(currentSessionId ?? "?") — \(thread.title)")
     }
 
     // MARK: - Clipboard -> Thread (no longer auto-deduces)
 
     private func handleClipboardChange(_ content: String) {
-        guard sessionActive, !sessionPaused, !isDeducing, !isExecuting else { return }
+        guard sessionActive, !isDeducing, !isExecuting else { return }
 
         lastClipboard = content
         clipboardCapturedApp = activeApp
         clipboardCapturedWindow = activeWindowTitle
+
+        // Forward to learn recorder if active
+        forwardClipboardToRecorderIfNeeded(content: content, app: activeApp, window: activeWindowTitle)
 
         if selectedProject == nil {
             // Auto-select the only project if there's exactly one
@@ -527,19 +615,24 @@ final class AppState: ObservableObject {
             }
         }
 
-        Task {
+        executionTask = Task {
             do {
                 for try await chunk in claudeCodeRunner.execute(suggestion: suggestion, project: project, sessionId: currentSessionId) {
+                    guard !Task.isCancelled else { break }
                     self.executionOutput += chunk
                 }
-                // Add execution result to thread
-                self.threadMessages.append(.execution(output: self.executionOutput))
+                if !Task.isCancelled {
+                    self.threadMessages.append(.execution(output: self.executionOutput))
+                }
             } catch {
-                let errMsg = error.localizedDescription
-                self.executionOutput += "\n[Error: \(errMsg)]"
-                self.threadMessages.append(.error(message: errMsg))
+                if !Task.isCancelled {
+                    let errMsg = error.localizedDescription
+                    self.executionOutput += "\n[Error: \(errMsg)]"
+                    self.threadMessages.append(.error(message: errMsg))
+                }
             }
             self.isExecuting = false
+            self.executionTask = nil
             self.statusLine = "Done"
         }
     }
@@ -563,6 +656,7 @@ final class AppState: ObservableObject {
         case .task:        return "autoclaw-task"
         case .addToTasks:  return "autoclaw-add-to-tasks"
         case .analyze:     return "autoclaw-analyze"
+        case .learn:       return "autoclaw-task"  // Learn uses task skill for execution
         }
     }
 
@@ -636,6 +730,166 @@ final class AppState: ObservableObject {
 
         print("[Autoclaw] Direct execute with \(selectedModel.displayName): \(title.prefix(60))")
 
+        executionTask = Task {
+            do {
+                for try await chunk in claudeCodeRunner.executeDirect(
+                    prompt: prompt,
+                    project: project,
+                    model: selectedModel,
+                    sessionId: currentSessionId
+                ) {
+                    guard !Task.isCancelled else { break }
+                    self.executionOutput += chunk
+                }
+                if !Task.isCancelled {
+                    self.threadMessages.append(.execution(output: self.executionOutput))
+                }
+            } catch {
+                if !Task.isCancelled {
+                    let errMsg = error.localizedDescription
+                    self.executionOutput += "\n[Error: \(errMsg)]"
+                    self.threadMessages.append(.error(message: errMsg))
+                }
+            }
+            self.isExecuting = false
+            self.executionTask = nil
+            self.statusLine = "Done"
+        }
+    }
+
+    func dismissSuggestion() {
+        currentSuggestion = nil
+        statusLine = "Listening..."
+    }
+
+    func dismissThread() {
+        showThread = false
+    }
+
+    // MARK: - Learn Mode
+
+    func startLearnRecording() {
+        guard let project = selectedProject else {
+            needsProjectSelection = true
+            statusLine = "Select a project to record"
+            return
+        }
+
+        // Start a session if not already active
+        if !sessionActive {
+            startSession()
+        }
+
+        workflowRecorder.startRecording(projectId: project.id)
+        isLearnRecording = true
+        statusLine = "Recording workflow..."
+        showThread = true
+        print("[Autoclaw] Learn recording started")
+    }
+
+    func stopLearnRecording() {
+        guard isLearnRecording else { return }
+
+        guard let recording = workflowRecorder.stopRecording() else {
+            isLearnRecording = false
+            return
+        }
+
+        isLearnRecording = false
+        currentRecording = recording
+        isExtractingSteps = true
+        statusLine = "Extracting steps..."
+
+        // Suggest a name from the first event descriptions
+        let firstEvents = recording.events.prefix(3).map(\.description)
+        workflowNameDraft = firstEvents.first ?? "Untitled workflow"
+
+        // Extract steps using AI
+        Task { @MainActor in
+            do {
+                let steps = try await WorkflowExtractor.extractSteps(
+                    from: recording,
+                    using: claudeCodeRunner,
+                    model: .haiku
+                )
+                self.extractedSteps = steps
+                self.statusLine = "\(steps.count) steps extracted"
+                print("[Autoclaw] Extracted \(steps.count) workflow steps")
+            } catch {
+                print("[Autoclaw] Step extraction failed: \(error)")
+                self.extractedSteps = []
+                self.statusLine = "Extraction failed"
+                self.threadMessages.append(.error(message: "Step extraction failed: \(error.localizedDescription)"))
+            }
+            self.isExtractingSteps = false
+        }
+    }
+
+    func saveWorkflow(name: String) {
+        guard let recording = currentRecording else { return }
+
+        let workflow = SavedWorkflow(
+            name: name.isEmpty ? "Untitled workflow" : name,
+            projectId: recording.projectId,
+            steps: extractedSteps
+        )
+
+        // Save to store
+        workflowStore.save(workflow: workflow)
+
+        // Generate skill file
+        do {
+            try WorkflowSkillTemplate.generateSkillFile(for: workflow, events: recording.events)
+        } catch {
+            print("[Autoclaw] Failed to write skill file: \(error)")
+        }
+
+        // Add confirmation to thread
+        threadMessages.append(.workflowSaved(workflow: workflow))
+
+        // Reset learn state
+        currentRecording = nil
+        extractedSteps = []
+        workflowNameDraft = ""
+        statusLine = "Workflow saved: \(workflow.name)"
+        print("[Autoclaw] Workflow saved: \(workflow.name) (\(workflow.steps.count) steps)")
+    }
+
+    func discardLearnRecording() {
+        workflowRecorder.discardRecording()
+        isLearnRecording = false
+        currentRecording = nil
+        extractedSteps = []
+        workflowNameDraft = ""
+        statusLine = "Recording discarded"
+    }
+
+    func executeWorkflow(_ workflow: SavedWorkflow) {
+        guard let project = selectedProject else { return }
+
+        // Start a session if needed
+        if !sessionActive {
+            startSession()
+        }
+
+        let skillName = workflow.skillFileName
+        let prompt = "/\(skillName) Execute this learned workflow now."
+
+        isExecuting = true
+        executionOutput = ""
+        statusLine = "Running: \(workflow.name)..."
+
+        // Update thread
+        if let thread = currentThread {
+            sessionStore.updateThread(id: thread.id, title: "Workflow: \(workflow.name)", taskTitle: workflow.name)
+            if let updated = sessionStore.threads.first(where: { $0.id == thread.id }) {
+                currentThread = updated
+            }
+        }
+
+        // Mark as run
+        workflowStore.markRun(id: workflow.id)
+
         Task {
             do {
                 for try await chunk in claudeCodeRunner.executeDirect(
@@ -657,12 +911,47 @@ final class AppState: ObservableObject {
         }
     }
 
-    func dismissSuggestion() {
-        currentSuggestion = nil
-        statusLine = "Listening..."
+    /// Forward app/clipboard changes to recorder when in learn mode
+    func forwardToRecorderIfNeeded(app: String, window: String) {
+        guard isLearnRecording else { return }
+        let url = activeWindowService.browserURL
+        workflowRecorder.recordAppSwitch(app: app, window: window, url: url)
+
+        // Add event to thread for live display
+        if let lastEvent = workflowRecorder.events.last {
+            threadMessages.append(.learnEvent(event: lastEvent))
+        }
     }
 
-    func dismissThread() {
-        showThread = false
+    func forwardClipboardToRecorderIfNeeded(content: String, app: String, window: String) {
+        guard isLearnRecording else { return }
+        workflowRecorder.recordClipboardChange(content: content, app: app, window: window)
+
+        if let lastEvent = workflowRecorder.events.last {
+            threadMessages.append(.learnEvent(event: lastEvent))
+        }
+    }
+
+    // MARK: - Voice Mode
+
+    func toggleVoice() {
+        if !sessionActive {
+            startSession()
+        }
+
+        if voiceService.isListening {
+            voiceService.stopListening()
+            statusLine = "Voice off"
+        } else {
+            voiceService.requestPermissions { [weak self] granted in
+                guard granted else {
+                    self?.statusLine = "Mic permission denied"
+                    return
+                }
+                self?.voiceService.startListening()
+                self?.statusLine = "Listening..."
+                self?.showThread = true
+            }
+        }
     }
 }

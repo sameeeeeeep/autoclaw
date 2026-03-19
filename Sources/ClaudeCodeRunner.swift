@@ -92,8 +92,8 @@ final class ClaudeCodeRunner: @unchecked Sendable {
 
     // MARK: - Direct Execute (skip deduction)
 
-    func executeDirect(prompt: String, project: Project, model: ClaudeModel, sessionId: String?) -> AsyncThrowingStream<String, Error> {
-        return runInteractiveSession(prompt: prompt, project: project, model: model, sessionId: sessionId)
+    func executeDirect(prompt: String, project: Project, model: ClaudeModel, sessionId: String?, singleShot: Bool = false) -> AsyncThrowingStream<String, Error> {
+        return runInteractiveSession(prompt: prompt, project: project, model: model, sessionId: sessionId, singleShot: singleShot)
     }
 
     // MARK: - Interactive Session (ported from autoclawd)
@@ -105,7 +105,8 @@ final class ClaudeCodeRunner: @unchecked Sendable {
         prompt: String,
         project: Project,
         model: ClaudeModel? = nil,
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        singleShot: Bool = false
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             do {
@@ -175,6 +176,12 @@ final class ClaudeCodeRunner: @unchecked Sendable {
                    let json = String(data: data, encoding: .utf8) {
                     stdinPipe.fileHandleForWriting.write((json + "\n").data(using: .utf8)!)
                     print("[Autoclaw] Sent interactive prompt (\(prompt.count) chars)")
+                }
+
+                // Single-shot mode: close stdin so the process exits after responding
+                if singleShot {
+                    stdinPipe.fileHandleForWriting.closeFile()
+                    print("[Autoclaw] Single-shot mode — stdin closed")
                 }
 
                 // Parse NDJSON from stdout using readabilityHandler

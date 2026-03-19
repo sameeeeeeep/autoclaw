@@ -126,29 +126,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyMonitor = GlobalHotkeyMonitor(
             onToggle: { [weak self] in self?.appState.toggleSession() },
             onPause:  { [weak self] in
+                // Fn key:
+                // 1. Session active → cycle mode
+                // 2. Session ended (toast visible) → resume it
+                // 3. No session at all → start fresh
                 guard let s = self?.appState else { return }
-                if s.lastEndedThread != nil {
-                    // Session just ended — Fn resumes it
+                if s.sessionActive {
+                    s.cycleRequestMode()
+                } else if s.lastEndedThread != nil {
                     s.resumeEndedSession()
                     self?.showThreadToast()
-                } else if s.sessionActive {
-                    s.togglePause()
                 } else {
-                    s.toggleSession()
+                    s.startSession()
+                    self?.showThreadToast()
                 }
             },
             onEnd:    { [weak self] in
+                // Double-tap Left ⌥:
+                // 1. Session active → end it (stops execution)
+                // 2. Session ended (toast visible) → dismiss toast
                 guard let s = self?.appState else { return }
-                if !s.sessionActive && s.lastEndedThread != nil {
-                    // Session already ended, toast showing — double-Option dismisses
+                if s.sessionActive {
+                    s.endSession()
+                } else if s.lastEndedThread != nil {
                     self?.threadWindow.dismiss()
                     s.dismissEndedSession()
-                } else {
-                    s.endSession()
                 }
             },
-            onScreenshot: { [weak self] in self?.appState.addScreenshotToThread() },
-            onCycleMode: { [weak self] in self?.appState.cycleRequestMode() }
+            onScreenshot: { [weak self] in
+                // ⌥+Z: dismiss toast without ending session (execution continues)
+                guard let s = self?.appState else { return }
+                if s.sessionActive {
+                    self?.threadWindow.dismiss()
+                    s.dismissThread()
+                }
+            },
+            onCycleMode: { [weak self] in self?.appState.cycleRequestMode() },
+            onVoiceToggle: { [weak self] in self?.appState.toggleVoice() }
         )
         hotkeyMonitor.start()
     }

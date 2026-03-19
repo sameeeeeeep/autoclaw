@@ -43,6 +43,8 @@ enum ThreadMessage: Identifiable {
     case error(id: UUID = UUID(), message: String, date: Date = Date())
     case context(id: UUID = UUID(), app: String, window: String, date: Date = Date())
     case attachment(id: UUID = UUID(), path: String, name: String, size: Int64, date: Date = Date())
+    case learnEvent(id: UUID = UUID(), event: WorkflowEvent, date: Date = Date())
+    case workflowSaved(id: UUID = UUID(), workflow: SavedWorkflow, date: Date = Date())
 
     var id: UUID {
         switch self {
@@ -54,6 +56,8 @@ enum ThreadMessage: Identifiable {
         case .error(let id, _, _): return id
         case .context(let id, _, _, _): return id
         case .attachment(let id, _, _, _, _): return id
+        case .learnEvent(let id, _, _): return id
+        case .workflowSaved(let id, _, _): return id
         }
     }
 
@@ -67,6 +71,8 @@ enum ThreadMessage: Identifiable {
         case .error(_, _, let d): return d
         case .context(_, _, _, let d): return d
         case .attachment(_, _, _, _, let d): return d
+        case .learnEvent(_, _, let d): return d
+        case .workflowSaved(_, _, let d): return d
         }
     }
 
