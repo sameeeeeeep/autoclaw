@@ -204,21 +204,9 @@ final class ClaudeCodeRunner: @unchecked Sendable {
                 stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
                     let data = handle.availableData
                     guard !data.isEmpty else {
-                        // EOF — process finished
+                        // EOF on stdout pipe — stop reading but do NOT call terminationStatus here.
+                        // The process may still be running; terminationHandler will handle cleanup.
                         stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                        stderrPipe.fileHandleForReading.readabilityHandler = nil
-                        session.isRunning = false
-                        let status = process.terminationStatus
-                        if status != 0 {
-                            let errDetail = stderrCollected.trimmingCharacters(in: .whitespacesAndNewlines)
-                            let msg = errDetail.isEmpty
-                                ? "Claude Code exited with status \(status)"
-                                : "Claude Code exited with status \(status): \(String(errDetail.suffix(500)))"
-                            print("[Autoclaw] ERROR: \(msg)")
-                            continuation.finish(throwing: AutoclawError.executionError(msg))
-                        } else {
-                            continuation.finish()
-                        }
                         return
                     }
 
@@ -252,11 +240,12 @@ final class ClaudeCodeRunner: @unchecked Sendable {
                 }
 
                 // Handle process termination — give readabilityHandler time to drain
-                process.terminationHandler = { proc in
+                process.terminationHandler = { [weak session] proc in
+                    // Delay slightly so readabilityHandler can process any remaining buffered data
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         stdoutPipe.fileHandleForReading.readabilityHandler = nil
                         stderrPipe.fileHandleForReading.readabilityHandler = nil
-                        session.isRunning = false
+                        session?.isRunning = false
                         let status = proc.terminationStatus
                         if status != 0 {
                             let errDetail = stderrCollected.trimmingCharacters(in: .whitespacesAndNewlines)
