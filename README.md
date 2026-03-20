@@ -1,198 +1,188 @@
 # Autoclaw
 
-**An ambient AI agent that lives in your macOS menu bar.** It observes your world, understands your needs, and fulfils them — without requiring you to prompt it.
+**Ambient AI for macOS.** An AI agent that lives at the OS layer — not inside an app. It sees your screen, understands what you're doing, detects friction in your workflow, and offers to fix it. You just approve.
 
-Built by [The Last Prompt](https://thelastprompt.ai) — a mission to write the last prompt that leads to singularity.
+Built by [The Last Prompt](https://thelastprompt.ai) — a mission to write the last prompt that makes prompting obsolete.
 
 ---
 
-## What is Autoclaw?
+## The Problem
 
-Autoclaw is a macOS menu bar app that brings always-on intelligence to your desktop. Instead of switching between AI apps, copy-pasting context, and figuring out which tool to use — Autoclaw watches your clipboard, understands what you're working on, and acts on your behalf.
+Every AI tool today lives *inside* an app. You copy context out of one app, paste it into a chatbot, figure out the right prompt, get a result, then manually carry it back. The human is the integration layer. The human is the bottleneck.
 
-**The core insight:** AI within apps creates cognitive load. Users have to figure out *what* to use, *when* to use it, *how* to use it, and then actually use it. Humans become the bottleneck. Autoclaw removes that friction by bringing agentic capability to the **interface level** — not to more apps, but to the layer where you already work.
+## The Idea
 
-## Architecture: ARIA
+What if AI operated at the **interface level** — watching everything you do across every app, understanding your intent, and acting on your behalf? Not another app to switch to. An ambient layer that already knows what you need.
 
-**Agentic Reality Interface Architecture** — Autoclaw is the first implementation of ARIA, a pattern where AI agents operate at the OS interface layer rather than inside individual applications.
+Autoclaw is the first implementation of **ARIA** (Agentic Reality Interface Architecture): AI as the interface to your computer, not as a chatbot within it.
+
+---
+
+## How It Works
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  Your Desktop                                            │
-│  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐           │
-│  │Slack │ │Chrome│ │VS    │ │Figma │ │Mail  │  ...       │
-│  └──────┘ └──────┘ └──────┘ └──────┘ └──────┘           │
-│       │         │        │        │        │             │
-│       └────┬────┴────┬───┴────┬───┴────┬───┘             │
-│            ▼         ▼        ▼        ▼                 │
-│  ┌──────────────────────────────────────────────────┐    │
-│  │  Perception Layer                                │    │
-│  │  Clipboard · URLs · App Switches · Files · Frames│    │
-│  └─────────────────────┬────────────────────────────┘    │
-│                        ▼                                 │
-│  ┌──────────────────────────────────────────────────┐    │
-│  │  ARIA Intelligence Layer                         │    │
-│  │  ┌────────────────┐  ┌─────────────────────────┐ │    │
-│  │  │FrictionDetector│→│CapabilityMap + Discovery│ │    │
-│  │  └────────────────┘  └─────────────────────────┘ │    │
-│  │  ┌────────────────┐  ┌─────────────────────────┐ │    │
-│  │  │KeyFrameAnalyzer│  │WebAppResolver           │ │    │
-│  │  └────────────────┘  └─────────────────────────┘ │    │
-│  └─────────────────────┬────────────────────────────┘    │
-│                        ▼                                 │
-│  ┌──────────────────────────────────────────────────┐    │
-│  │  "I can sync Notion → Sheets for you"  [Do it]  │    │
-│  └──────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────┘
+You work normally on your Mac
+        │
+        ▼
+┌─────────────────────────────────────────────────┐
+│  Perception Layer                               │
+│                                                 │
+│  Screen capture ──→ Neural Engine embeddings    │
+│  Active window  ──→ Web app resolution          │
+│  Clipboard      ──→ Content classification      │
+│  File system    ──→ FSEvents monitoring         │
+│  Clicks         ──→ Interaction tracking        │
+└───────────────────────┬─────────────────────────┘
+                        ▼
+┌─────────────────────────────────────────────────┐
+│  Intelligence Layer (ARIA)                      │
+│                                                 │
+│  Key frames sent to Sonnet ──→ visual context   │
+│  Friction detector ──→ spots manual workflows   │
+│  Capability map ──→ what's automatable          │
+│  Capability discovery ──→ what could be         │
+└───────────────────────┬─────────────────────────┘
+                        ▼
+┌─────────────────────────────────────────────────┐
+│  "You're copying prices from Amazon into a      │
+│   spreadsheet. I can pull those directly."       │
+│                                                 │
+│                    [ Do it ]  [ Dismiss ]        │
+└─────────────────────────────────────────────────┘
 ```
 
-## Features
+**You never prompted it.** It saw what you were doing, recognized the friction, checked what tools it has, and offered to help. You just approve or ignore.
 
-### ARIA Intelligence Layer
-Autoclaw doesn't wait for you to ask. It **watches what you do and tells you what it can automate.**
+---
 
-- **Friction Detection** — recognizes when you're manually moving data between apps, doing repetitive navigation, or switching back and forth to look something up
-- **Capability Matching** — knows what MCP tools and APIs are installed and matches them against the friction it detects
-- **Proactive Offers** — surfaces suggestions like "I noticed you're copying data from Notion to Sheets. I can sync that directly." You approve or dismiss.
-- **Capability Discovery** — when friction is detected but no installed tool covers it, searches the web for MCP servers and integrations that could help
-- **Key Frame Analysis** — captures screenshots at important moments using Neural Engine embeddings for smart change detection (ported from [video2ai](https://github.com/sameeeeeeep/video2ai)), active window cropping for detail, and sends frames directly to Sonnet for rich visual understanding of what you're doing
-- **Web App Resolution** — knows that "Chrome" really means "Notion", "Figma", "Gmail", etc. based on the URL
+## ARIA Intelligence
 
-### Session-Based Workflow
-- **Start a session** with Fn key or from the menu bar
-- Autoclaw monitors your clipboard, active app, and window context
-- Copy anything — code, text, URLs, error messages — and it appears in the session thread
-- **End session** with double-tap Left Option; **resume** with Fn
+The core of Autoclaw isn't a chatbot — it's a perception-to-action pipeline that runs continuously while you work.
 
-### Request Modes (cycle with Option+X)
-| Mode | Icon | What it does |
-|------|------|-------------|
-| **Task** | Play | Execute a coding/automation task — edit files, run commands, ship code |
-| **Add to Tasks** | Plus | Create ClickUp tasks from context — meetings, bugs, ideas |
-| **Question** | Question | Ask anything — queries Granola meetings, ClickUp tasks, web search. Never touches code |
-| **Analyze** | Magnifier | Deep analysis of context — read code, check tools, provide structured assessment without making changes |
+### Friction Detection
+Watches your live activity stream and recognizes patterns that signal manual work:
+- **Cross-app transfers** — copying data from one app and pasting into another
+- **File shuttles** — downloading from one service, uploading to another
+- **Manual lookups** — switching to a reference app, copying a value, switching back
+- **Repetitive navigation** — the same app-switching loop happening over and over
 
-Each mode invokes a dedicated Claude Code **skill** (`~/.claude/skills/autoclaw-*/SKILL.md`) that enforces the right behavior — Question mode is forbidden from exploring the filesystem, Task mode is told to execute autonomously, etc.
+### Key Frame Analysis
+Instead of noisy OCR, Autoclaw uses **Apple's Neural Engine** (VNGenerateImageFeaturePrintRequest) to embed screen frames as 768-dim vectors and detect when something actually changed semantically. Only meaningful frames get sent to **Sonnet's vision** — with active window crops at 1440px for real detail. It doesn't just see "Chrome." It sees "editing row 3 of Q1 Budget in Google Sheets."
 
-### Toast UI
-- Floating toast window with live session thread
-- **Apple Intelligence-style glow** reflects state: green (active), white (paused), purple (processing), cyan (done)
-- Menubar icon in the header changes color with session state
-- Live streaming execution output directly in the toast
-- Model and project selectors in the header
-- Screenshot capture (Option+Z), file drag & drop
-- Session-ended state with Resume/Dismiss
+Ported from [video2ai](https://github.com/sameeeeeeep/video2ai)'s key frame extraction — the same cosine distance + adaptive thresholding approach, applied to live screen capture instead of video files.
 
-### Connectors (via MCP)
-Autoclaw spawns Claude Code sessions that have access to all your configured MCP servers:
+### Capability Matching
+When friction is detected, Autoclaw checks its **capability map** — an index of every installed MCP tool and what it can do. If an installed tool can solve the friction, it offers immediately. If not, it searches the web for MCP servers that could.
+
+### Web App Resolution
+Knows that "Chrome" isn't Chrome — it's Notion, Figma, Gmail, Jira, whatever the URL says. This is how "user switched from Chrome to Chrome" becomes "user switched from Notion to Google Sheets."
+
+---
+
+## When You Do Want to Talk
+
+Autoclaw also has direct interaction modes for when you want to ask or command:
+
+| Mode | What it does |
+|------|-------------|
+| **Task** | Execute — edit files, run commands, ship code |
+| **Question** | Ask — queries meetings, tasks, web. Never touches code |
+| **Analyze** | Deep read — structured assessment without changes |
+| **Add to Tasks** | Create ClickUp tasks from context |
+
+Cycle modes with **Option+X**. Each mode runs a dedicated Claude Code skill that enforces the right behavior.
+
+---
+
+## Connectors
+
+Autoclaw spawns Claude Code sessions with access to your MCP servers:
 
 | Connector | What it provides |
 |-----------|-----------------|
-| **ClickUp** | Task management — create, search, update tasks, time tracking, comments |
-| **Granola** | Meeting intelligence — notes, transcripts, decisions, action items |
-| **Google Sheets** | Spreadsheet data — read, write, analyze |
-| **GitHub** | Code — issues, PRs, repo management |
-| **Web Search** | Real-time information retrieval |
-| **Filesystem** | Read, write, edit project files (Task mode only) |
+| **ClickUp** | Tasks, time tracking, comments |
+| **Granola** | Meeting notes, transcripts, action items |
+| **Google Sheets** | Spreadsheet read/write |
+| **GitHub** | Issues, PRs, repos |
+| **Web Search** | Real-time information |
+| **Filesystem** | Project files (Task mode only) |
 
-Add any MCP server to `~/.claude/mcp.json` and Autoclaw can use it.
+Add any MCP server to `~/.claude/mcp.json` and Autoclaw can use it — both for direct execution and for capability matching against detected friction.
 
-### Keyboard-Driven
+---
+
+## Keyboard
+
 | Shortcut | Action |
 |----------|--------|
-| **Fn** | Toggle pause / resume session / start session |
-| **Double-tap Left Option** | End session (or dismiss ended toast) |
-| **Option+Z** | Capture screenshot to thread |
+| **Fn** | Toggle session / pause / resume |
+| **Double-tap Left Option** | End session |
+| **Option+Z** | Capture screenshot |
 | **Option+X** | Cycle request mode |
 
-### Panel
-- Main panel with Home, Threads, and Settings tabs
-- Session history — click any past session to view details
-- Project management — multiple projects with per-project sessions
-- Model selection — Haiku, Sonnet, Opus
+---
 
-## Use Cases
+## Tech
 
-**Developer workflow:**
-Copy an error from your terminal → Autoclaw captures it → switch to Task mode → hit Enter → it fixes the bug in your codebase.
-
-**Meeting follow-ups:**
-After a standup → switch to Question mode → "what action items came out of the standup?" → Autoclaw queries Granola → then switch to Add to Tasks → "create tasks for those action items" → ClickUp tasks created.
-
-**Research & context:**
-Copy a Slack message about a bug → switch to Analyze mode → "what's the root cause?" → Autoclaw reads the relevant code and provides analysis without changing anything.
-
-**Quick answers:**
-"How many open tasks does the mobile team have?" → Question mode → queries ClickUp → answers in seconds, never touches the filesystem.
-
-## Tech Stack
-
-- **Swift** — native macOS app, no Electron
-- **SwiftUI** — toast, panel, and pill widget UI
-- **Claude Code CLI** — stream-json I/O for real-time execution
-- **MCP (Model Context Protocol)** — connector ecosystem
+- **Swift** — native macOS, no Electron
+- **SwiftUI** — toast, panel, pill widget
+- **Apple Vision / Neural Engine** — frame embeddings for change detection
+- **Claude Code CLI** — stream-json execution
+- **MCP** — connector ecosystem
 - **Claude Code Skills** — per-mode behavior enforcement
 
 ## Setup
 
-### Prerequisites
-- macOS 13+
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed (`npm install -g @anthropic-ai/claude-code`)
-- Anthropic API key or OAuth token
-
-### Build & Run
 ```bash
-git clone https://github.com/thelastprompt/autoclaw.git
+git clone https://github.com/sameeeeeeep/autoclaw.git
 cd autoclaw
 make run
 ```
 
-### Configure
-1. Open Autoclaw from the menu bar → Settings
-2. Add your Anthropic API key
-3. Add a project (name + path to a local directory)
-4. Configure MCP servers in `~/.claude/mcp.json` for ClickUp, Granola, etc.
-5. Grant Accessibility permission (System Settings → Privacy & Security → Accessibility) for global hotkeys
+**Requires:** macOS 13+, [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), Anthropic API key. Grant Accessibility permission for global hotkeys.
+
+---
 
 ## Project Structure
 
 ```
 Sources/
-├── App.swift                  # App entry point
-├── AppDelegate.swift          # Menu bar, window management, state observation
-├── AppState.swift             # Central state — sessions, modes, ARIA wiring
-├── ClaudeCodeRunner.swift     # Stream-json CLI integration
-├── TaskDeductionService.swift # Haiku-based task analysis
-├── TaskApprovalView.swift     # Toast UI — thread, input, mode selector
-├── MainPanelView.swift        # Panel — home, threads, settings
-├── PillView.swift             # Side widget with intelligence glow
-├── GlobalHotkeyMonitor.swift  # Fn, Option, keyboard shortcuts
-├── SessionThread.swift        # Session persistence
-│
-│   ARIA Intelligence Layer
-├── FrictionDetector.swift     # Detects automation opportunities from live activity
-├── CapabilityMap.swift        # Indexes installed MCP tools and what they can do
-├── CapabilityDiscovery.swift  # Web search for new integrations
-├── KeyFrameAnalyzer.swift     # Neural Engine frame differencing + Sonnet vision analysis
-├── WebAppResolver.swift       # Maps browser URLs to semantic app identities
-├── FileActivityMonitor.swift  # Watches file system for cross-app transfers
-│
 │   Perception
-├── ActiveWindowService.swift  # App, window, URL tracking with web app resolution
-├── ClipboardMonitor.swift     # Clipboard polling
-├── ScreenCaptureStream.swift  # Screen capture with active window cropping + click detection
-├── ScreenOCR.swift            # Apple Vision OCR with cursor proximity ranking
-├── WorkflowRecorder.swift     # Passive always-on event recording during sessions
+├── ScreenCaptureStream.swift  — screen capture + active window cropping + click detection
+├── ActiveWindowService.swift  — app/window/URL tracking with web app resolution
+├── ClipboardMonitor.swift     — clipboard polling
+├── ScreenOCR.swift            — Apple Vision OCR with cursor proximity ranking
+├── FileActivityMonitor.swift  — FSEvents watcher for cross-app file transfers
+├── WorkflowRecorder.swift     — passive always-on event recording
+│
+│   ARIA Intelligence
+├── KeyFrameAnalyzer.swift     — Neural Engine embeddings + Sonnet vision analysis
+├── FrictionDetector.swift     — pattern matching on live activity stream
+├── CapabilityMap.swift        — indexes installed MCP tools into searchable registry
+├── CapabilityDiscovery.swift  — web search for new integrations
+├── WebAppResolver.swift       — browser URLs → semantic app identities
+│
+│   Execution
+├── ClaudeCodeRunner.swift     — stream-json CLI integration
+├── TaskDeductionService.swift — task analysis and intent extraction
+│
+│   Interface
+├── PillView.swift             — menu bar pill with intelligence glow
+├── TaskApprovalView.swift     — toast UI with session thread
+├── MainPanelView.swift        — panel with home, threads, settings
+├── AppState.swift             — central state and ARIA wiring
 └── ...
 ```
 
+---
+
 ## The Last Prompt
 
-Autoclaw is Phase 1 of [The Last Prompt](https://thelastprompt.ai)'s ambient AI vision:
+Autoclaw is Phase 1 of [The Last Prompt](https://thelastprompt.ai)'s vision:
 
-> We're building always-on intelligence that understands the user's world, extracts tasks for work and life, figures out the capability required to fulfil each task, builds it if it doesn't exist, and fulfils the tasks — without the need to prompt it.
+> Always-on intelligence that understands the user's world, extracts tasks for work and life, figures out the capability required to fulfil each task, builds it if it doesn't exist, and fulfils the tasks — without the need to prompt it.
 
-**Phase 1: macOS** — Autoclaw is an AI ghost that lives on your MacBook menu bar. It observes your world, understands your needs, and fulfils them for you.
+AI shouldn't live in an app. It should be the interface.
 
 ---
 
