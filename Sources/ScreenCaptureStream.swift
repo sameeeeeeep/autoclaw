@@ -113,6 +113,76 @@ final class ScreenCaptureStream: NSObject, ObservableObject {
         return frameBuffer.last
     }
 
+    /// Get the two most recent frames for change detection
+    func recentFramePair() -> (previous: CGImage, current: CGImage)? {
+        frameLock.lock()
+        defer { frameLock.unlock() }
+        guard frameBuffer.count >= 2 else { return nil }
+        return (frameBuffer[frameBuffer.count - 2], frameBuffer[frameBuffer.count - 1])
+    }
+
+    /// Capture the active window region only (cropped from full screen).
+    /// Uses Accessibility API to get the focused window's frame.
+    func captureActiveWindow() -> (image: CGImage, windowRect: CGRect)? {
+        guard let fullFrame = latestFrame() else { return nil }
+
+        guard let frontApp = NSWorkspace.shared.frontmostApplication else {
+            return (fullFrame, CGRect(x: 0, y: 0, width: fullFrame.width, height: fullFrame.height))
+        }
+
+        let appRef = AXUIElementCreateApplication(frontApp.processIdentifier)
+        var windowValue: AnyObject?
+        AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &windowValue)
+
+        guard let window = windowValue else {
+            return (fullFrame, CGRect(x: 0, y: 0, width: fullFrame.width, height: fullFrame.height))
+        }
+
+        let axWindow = window as! AXUIElement
+
+        // Get window position and size via Accessibility
+        var posValue: AnyObject?
+        var sizeValue: AnyObject?
+        AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &posValue)
+        AXUIElementCopyAttributeValue(axWindow, kAXSizeAttribute as CFString, &sizeValue)
+
+        guard let posVal = posValue, let sizeVal = sizeValue else {
+            return (fullFrame, CGRect(x: 0, y: 0, width: fullFrame.width, height: fullFrame.height))
+        }
+
+        var pos = CGPoint.zero
+        var size = CGSize.zero
+        AXValueGetValue(posVal as! AXValue, .cgPoint, &pos)
+        AXValueGetValue(sizeVal as! AXValue, .cgSize, &size)
+
+        // Convert screen coordinates to image pixel coordinates
+        guard let mainScreen = NSScreen.main else {
+            return (fullFrame, CGRect(x: 0, y: 0, width: fullFrame.width, height: fullFrame.height))
+        }
+
+        let screenW = mainScreen.frame.width
+        let screenH = mainScreen.frame.height
+        let scaleX = CGFloat(fullFrame.width) / screenW
+        let scaleY = CGFloat(fullFrame.height) / screenH
+
+        // AX uses top-left origin, same as CGImage
+        let cropRect = CGRect(
+            x: max(0, pos.x * scaleX),
+            y: max(0, pos.y * scaleY),
+            width: min(size.width * scaleX, CGFloat(fullFrame.width) - pos.x * scaleX),
+            height: min(size.height * scaleY, CGFloat(fullFrame.height) - pos.y * scaleY)
+        ).integral
+
+        // Clamp to image bounds
+        let clampedRect = cropRect.intersection(CGRect(x: 0, y: 0, width: fullFrame.width, height: fullFrame.height))
+        guard !clampedRect.isEmpty, clampedRect.width > 100, clampedRect.height > 100,
+              let cropped = fullFrame.cropping(to: clampedRect) else {
+            return (fullFrame, CGRect(x: 0, y: 0, width: fullFrame.width, height: fullFrame.height))
+        }
+
+        return (cropped, CGRect(x: pos.x, y: pos.y, width: size.width, height: size.height))
+    }
+
     // MARK: - ScreenCaptureKit Stream
 
     private func startSCStream() async -> Bool {

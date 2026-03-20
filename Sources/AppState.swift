@@ -309,6 +309,20 @@ final class AppState: ObservableObject {
         fileActivityMonitor.start()
         keyFrameAnalyzer.start()
 
+        // Start the screen capture stream for key frame analysis + click detection
+        Task {
+            await workflowRecorder.captureStream.start()
+
+            // Wire click events → key frame analyzer (when not in learn mode)
+            workflowRecorder.captureStream.onClickCaptured = { [weak self] frame, cursorLocation, screenSize in
+                guard let self = self, !self.isLearnRecording else { return }
+                let effectiveApp = self.activeWindowService.effectiveAppName
+                Task { @MainActor in
+                    self.keyFrameAnalyzer.onClick(app: effectiveApp, cursorPosition: cursorLocation)
+                }
+            }
+        }
+
         // Add initial context chip and show toast immediately
         let effectiveApp = activeWindowService.effectiveAppName
         if !effectiveApp.isEmpty {
@@ -391,6 +405,12 @@ final class AppState: ObservableObject {
         keyFrameAnalyzer.stop()
         keyFrameAnalyzer.cleanup()
         activeFriction = nil
+
+        // Stop capture stream (if not in learn mode, which manages its own lifecycle)
+        if !isLearnRecording {
+            workflowRecorder.captureStream.onClickCaptured = nil
+            workflowRecorder.captureStream.stop()
+        }
 
         sessionActive = false
         sessionPaused = false
@@ -806,6 +826,15 @@ final class AppState: ObservableObject {
         if !attachmentPaths.isEmpty {
             contextParts.append("## Attached Files")
             for path in attachmentPaths {
+                contextParts.append("- \(path)")
+            }
+        }
+
+        // Attach recent key frames so Sonnet can see what the user is doing
+        let keyFramePaths = keyFrameAnalyzer?.recentFramePaths(limit: 3) ?? []
+        if !keyFramePaths.isEmpty {
+            contextParts.append("## Recent Screen Context (key frames from the user's session)")
+            for path in keyFramePaths {
                 contextParts.append("- \(path)")
             }
         }

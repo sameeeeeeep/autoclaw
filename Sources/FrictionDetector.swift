@@ -342,11 +342,17 @@ final class FrictionDetector: ObservableObject {
               let context = analyzer.latestContext else { return signal }
 
         // Use the AI-analyzed context to create a richer description
-        let enrichedDescription: String
+        var enrichedDescription = signal.description
         if let intent = context.inferredIntent {
-            enrichedDescription = "\(signal.description) (while \(intent))"
+            enrichedDescription += " (while \(intent))"
         } else {
-            enrichedDescription = "\(signal.description) — \(context.currentActivity)"
+            enrichedDescription += " — \(context.currentActivity)"
+        }
+        if let stage = context.workflowStage {
+            enrichedDescription += " [\(stage)]"
+        }
+        if let pattern = context.interactionPattern {
+            enrichedDescription += " — pattern: \(pattern)"
         }
 
         return FrictionSignal(

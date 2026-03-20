@@ -55,7 +55,7 @@ Autoclaw doesn't wait for you to ask. It **watches what you do and tells you wha
 - **Capability Matching** — knows what MCP tools and APIs are installed and matches them against the friction it detects
 - **Proactive Offers** — surfaces suggestions like "I noticed you're copying data from Notion to Sheets. I can sync that directly." You approve or dismiss.
 - **Capability Discovery** — when friction is detected but no installed tool covers it, searches the web for MCP servers and integrations that could help
-- **Key Frame Analysis** — captures screenshots at important moments and uses Claude's vision to understand what you're actually doing, not just raw OCR text
+- **Key Frame Analysis** — captures screenshots at important moments using Neural Engine embeddings for smart change detection (ported from [video2ai](https://github.com/sameeeeeeep/video2ai)), active window cropping for detail, and sends frames directly to Sonnet for rich visual understanding of what you're doing
 - **Web App Resolution** — knows that "Chrome" really means "Notion", "Figma", "Gmail", etc. based on the URL
 
 ### Session-Based Workflow
@@ -173,14 +173,14 @@ Sources/
 ├── FrictionDetector.swift     # Detects automation opportunities from live activity
 ├── CapabilityMap.swift        # Indexes installed MCP tools and what they can do
 ├── CapabilityDiscovery.swift  # Web search for new integrations
-├── KeyFrameAnalyzer.swift     # Vision-based screen context understanding
+├── KeyFrameAnalyzer.swift     # Neural Engine frame differencing + Sonnet vision analysis
 ├── WebAppResolver.swift       # Maps browser URLs to semantic app identities
 ├── FileActivityMonitor.swift  # Watches file system for cross-app transfers
 │
 │   Perception
 ├── ActiveWindowService.swift  # App, window, URL tracking with web app resolution
 ├── ClipboardMonitor.swift     # Clipboard polling
-├── ScreenCaptureStream.swift  # Low-fps screen capture with rolling frame buffer
+├── ScreenCaptureStream.swift  # Screen capture with active window cropping + click detection
 ├── ScreenOCR.swift            # Apple Vision OCR with cursor proximity ranking
 ├── WorkflowRecorder.swift     # Passive always-on event recording during sessions
 └── ...
