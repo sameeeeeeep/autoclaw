@@ -5,13 +5,11 @@ import AppKit
 
 enum PillMode: String, CaseIterable {
     case ambient  = "ambient"
-    case aiSearch = "aiSearch"
     case learn    = "learn"
 
     var icon: String {
         switch self {
         case .ambient:  return "checklist"
-        case .aiSearch: return "magnifyingglass"
         case .learn:    return "brain.head.profile"
         }
     }
@@ -19,7 +17,6 @@ enum PillMode: String, CaseIterable {
     var color: Color {
         switch self {
         case .ambient:  return .green
-        case .aiSearch: return .accentColor
         case .learn:    return .cyan
         }
     }
@@ -112,10 +109,11 @@ struct SidebarView: View {
     @ObservedObject var appState: AppState
     @Binding var collapseLevel: CollapseLevel
     @State private var pillMode: PillMode = .ambient
-    @State private var micOn = false
-    @State private var analysisOn = false
-    @State private var codeOn = false
-    @State private var screenShareOn = false
+
+    // Derived from AppState — no more fake local state
+    private var micOn: Bool { appState.isVoiceListening }
+    private var analysisOn: Bool { appState.isDeducing }
+    private var codeOn: Bool { appState.isExecuting }
 
     var body: some View {
         Group {
@@ -186,11 +184,11 @@ struct SidebarView: View {
     // Three icons side-by-side, same glassRow + circle-icon pattern as statusRow
     private var tripleStatusRow: some View {
         HStack(spacing: 8) {
-            tripleStatusBtn("mic.fill",    color: .green,                              active: micOn)          { micOn.toggle() }
-            tripleStatusBtn("brain",       color: Color(red: 0.25, green: 0.55, blue: 1.0), active: appState.isDeducing) { analysisOn.toggle() }
+            tripleStatusBtn("mic.fill",    color: .green,                              active: micOn)          { appState.toggleVoice() }
+            tripleStatusBtn("brain",       color: Color(red: 0.25, green: 0.55, blue: 1.0), active: analysisOn) { /* read-only indicator */ }
             tripleStatusBtn("chevron.left.forwardslash.chevron.right",
                             color: Color(red: 0.58, green: 0.2, blue: 0.92),
-                            active: appState.isExecuting) { codeOn.toggle() }
+                            active: codeOn) { /* read-only indicator */ }
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 6)
@@ -258,14 +256,14 @@ struct SidebarView: View {
     private var statusSection: some View {
         VStack(spacing: 6) {
             statusRow(icon: "mic.fill", color: .green,
-                      title: nil, sub: micOn ? "Apple SF · LOCAL" : "Paused · tap to resume",
-                      enabled: micOn, active: micOn, waveform: true) { micOn.toggle() }
+                      title: nil, sub: micOn ? "Apple SF · LOCAL" : "Tap to start voice",
+                      enabled: micOn, active: micOn, waveform: true) { appState.toggleVoice() }
             statusRow(icon: "brain", color: Color(red: 0.25, green: 0.55, blue: 1.0),
-                      title: "Analysis", sub: analysisOn ? (appState.isDeducing ? "Haiku 4.5 · API" : "Ready") : "Off",
-                      enabled: analysisOn, active: appState.isDeducing, waveform: false) { analysisOn.toggle() }
+                      title: "Analysis", sub: analysisOn ? "Haiku · API" : (appState.sessionActive ? "Ready" : "Off"),
+                      enabled: appState.sessionActive, active: analysisOn, waveform: false) { /* indicator */ }
             statusRow(icon: "chevron.left.forwardslash.chevron.right", color: Color(red: 0.58, green: 0.2, blue: 0.92),
-                      title: "Execution", sub: codeOn ? (appState.isExecuting ? "Running…" : "Ready") : "Off",
-                      enabled: codeOn, active: appState.isExecuting, waveform: false) { codeOn.toggle() }
+                      title: "Execution", sub: codeOn ? "Running…" : (appState.sessionActive ? "Ready" : "Off"),
+                      enabled: appState.sessionActive, active: codeOn, waveform: false) { /* indicator */ }
         }.padding(.horizontal, 10).padding(.bottom, 6)
     }
 
@@ -521,7 +519,10 @@ struct SidebarView: View {
             Rectangle().fill(Ap.dockSep).frame(width: 1, height: 20)
             dockBtn("camera.fill", on: false, c: Color(red: 0.0, green: 0.78, blue: 0.9)) { appState.addScreenshotToThread() }
             Rectangle().fill(Ap.dockSep).frame(width: 1, height: 20)
-            dockBtn(screenShareOn ? "tv.fill" : "tv", on: screenShareOn, c: Color(red: 0.0, green: 0.78, blue: 0.9)) { screenShareOn.toggle() }
+            // Chrome extension status indicator
+            dockBtn(appState.browserBridge.isConnected ? "globe" : "globe.badge.chevron.backward",
+                    on: appState.browserBridge.isConnected,
+                    c: appState.browserBridge.isRecording ? .red : Color(red: 0.0, green: 0.78, blue: 0.9)) { /* status only */ }
         }.frame(height: 38).padding(.horizontal, 12).padding(.bottom, 6)
     }
 

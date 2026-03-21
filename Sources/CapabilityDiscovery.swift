@@ -40,11 +40,9 @@ final class CapabilityDiscovery {
     private var cache: [String: DiscoveryResult] = [:]
     private var inProgress: Set<String> = []
 
-    private let runner: ClaudeCodeRunner
     private let capabilityMap: CapabilityMap
 
-    init(runner: ClaudeCodeRunner, capabilityMap: CapabilityMap) {
-        self.runner = runner
+    init(capabilityMap: CapabilityMap) {
         self.capabilityMap = capabilityMap
     }
 
@@ -77,17 +75,7 @@ final class CapabilityDiscovery {
         )
 
         do {
-            var output = ""
-            for try await chunk in runner.executeDirect(
-                prompt: prompt,
-                project: Project(id: UUID(), name: "capability-discovery", path: NSTemporaryDirectory()),
-                model: .haiku,
-                sessionId: nil,
-                singleShot: true
-            ) {
-                output += chunk
-            }
-
+            let output = try await callCLI(prompt: prompt)
             let findings = parseFindings(from: output)
             let result = DiscoveryResult(
                 query: "\(sourceApp) → \(targetApp)",
@@ -228,5 +216,62 @@ final class CapabilityDiscovery {
 
         if actions.isEmpty { actions.append("interact") }
         return actions
+    }
+
+    // MARK: - CLI Call
+
+    private func callCLI(prompt: String) async throws -> String {
+        guard let claudeURL = Self.findCLI() else {
+            throw AutoclawError.executionError("claude CLI not found")
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                let process = Process()
+                process.executableURL = claudeURL
+                process.arguments = ["--model", "haiku", "-p", prompt, "--output-format", "json", "--dangerously-skip-permissions"]
+                var env = ProcessInfo.processInfo.environment
+                env.removeValue(forKey: "CLAUDECODE")
+                env.removeValue(forKey: "CLAUDE_CODE_ENTRYPOINT")
+                env.removeValue(forKey: "CLAUDE_CODE_OAUTH_TOKEN")
+                let apiKey = AppSettings.shared.anthropicAPIKey
+                if !apiKey.isEmpty {
+                    if apiKey.contains("-oat") {
+                        env["CLAUDE_CODE_OAUTH_TOKEN"] = apiKey
+                        env.removeValue(forKey: "ANTHROPIC_API_KEY")
+                    } else {
+                        env["ANTHROPIC_API_KEY"] = apiKey
+                        env.removeValue(forKey: "CLAUDE_CODE_OAUTH_TOKEN")
+                    }
+                }
+                process.environment = env
+                let stdout = Pipe()
+                process.standardOutput = stdout
+                process.standardError = Pipe()
+                do {
+                    try process.run()
+                    let outData = stdout.fileHandleForReading.readDataToEndOfFile()
+                    process.waitUntilExit()
+                    let raw = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    if let data = raw.data(using: .utf8),
+                       let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let result = envelope["result"] as? String {
+                        continuation.resume(returning: result)
+                    } else {
+                        continuation.resume(returning: raw)
+                    }
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private static func findCLI() -> URL? {
+        let localBin = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/claude").path
+        if FileManager.default.isExecutableFile(atPath: localBin) { return URL(fileURLWithPath: localBin) }
+        for path in ["/usr/local/bin/claude", "/opt/homebrew/bin/claude", "/usr/bin/claude"] {
+            if FileManager.default.isExecutableFile(atPath: path) { return URL(fileURLWithPath: path) }
+        }
+        return nil
     }
 }

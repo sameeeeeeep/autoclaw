@@ -145,7 +145,7 @@ final class AppState: ObservableObject {
 
         // Initialize ARIA intelligence layer
         self.frictionDetector = FrictionDetector(capabilityMap: capabilityMap)
-        self.capabilityDiscovery = CapabilityDiscovery(runner: claudeCodeRunner, capabilityMap: capabilityMap)
+        self.capabilityDiscovery = CapabilityDiscovery(capabilityMap: capabilityMap)
         self.keyFrameAnalyzer = KeyFrameAnalyzer(captureStream: workflowRecorder.captureStream)
 
         // Connect key frame analyzer to friction detector for richer context
