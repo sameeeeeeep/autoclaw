@@ -180,6 +180,11 @@ final class FileActivityMonitor: ObservableObject {
                 fm.fileExists(atPath: fullPath, isDirectory: &isDir)
                 if isDir.boolValue { continue }
 
+                // Skip our own key frame and grid files to prevent infinite loops
+                if fileName.hasPrefix("autoclaw_keyframe_") || fileName.hasPrefix("autoclaw_grid_") {
+                    continue
+                }
+
                 let size = attrs[.size] as? Int64 ?? 0
                 let ext = (fileName as NSString).pathExtension
 

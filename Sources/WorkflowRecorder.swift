@@ -54,9 +54,16 @@ final class WorkflowRecorder: ObservableObject {
         elapsed = 0
         startTime = Date()
         isRecording = true
-        lastApp = ""
-        lastWindow = ""
         lastClipboard = ""
+
+        // Seed with current active app so clicks before the first app switch aren't "unknown"
+        if let frontApp = NSWorkspace.shared.frontmostApplication {
+            lastApp = frontApp.localizedName ?? ""
+            lastWindow = ""
+        } else {
+            lastApp = ""
+            lastWindow = ""
+        }
 
         // Elapsed timer — update every second
         elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in

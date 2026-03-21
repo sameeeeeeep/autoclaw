@@ -4,9 +4,9 @@ import Combine
 // MARK: - Model Selection
 
 enum ClaudeModel: String, CaseIterable, Identifiable {
-    case haiku = "claude-haiku-4-5-20251001"
-    case sonnet = "claude-sonnet-4-5-20250514"
-    case opus = "claude-opus-4-0-20250514"
+    case haiku = "haiku"
+    case sonnet = "sonnet"
+    case opus = "opus"
 
     var id: String { rawValue }
 
@@ -45,6 +45,7 @@ final class AppState: ObservableObject {
     // MARK: - ARIA Intelligence Layer
     let capabilityMap = CapabilityMap()
     let fileActivityMonitor = FileActivityMonitor()
+    let browserBridge = BrowserBridge()
     private(set) var frictionDetector: FrictionDetector!
     private(set) var capabilityDiscovery: CapabilityDiscovery!
     private(set) var keyFrameAnalyzer: KeyFrameAnalyzer!
@@ -122,6 +123,9 @@ final class AppState: ObservableObject {
     // MARK: - ARIA Friction Detection
     @Published var activeFriction: FrictionDetector.FrictionSignal?
 
+    // MARK: - Chrome Extension (DOM events from WebSocket)
+    var browserEventBuffer: [BrowserDOMEvent] = []
+
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
@@ -142,7 +146,7 @@ final class AppState: ObservableObject {
         // Initialize ARIA intelligence layer
         self.frictionDetector = FrictionDetector(capabilityMap: capabilityMap)
         self.capabilityDiscovery = CapabilityDiscovery(runner: claudeCodeRunner, capabilityMap: capabilityMap)
-        self.keyFrameAnalyzer = KeyFrameAnalyzer(runner: claudeCodeRunner, captureStream: workflowRecorder.captureStream)
+        self.keyFrameAnalyzer = KeyFrameAnalyzer(captureStream: workflowRecorder.captureStream)
 
         // Connect key frame analyzer to friction detector for richer context
         frictionDetector.keyFrameAnalyzer = keyFrameAnalyzer
@@ -181,6 +185,42 @@ final class AppState: ObservableObject {
         // Scan installed MCP tools to build the capability map
         capabilityMap.scanInstalledTools()
 
+        // Wire workflow matcher + saved workflows into friction detector
+        let matcher = WorkflowMatcher()
+        frictionDetector.workflowMatcher = matcher
+        frictionDetector.savedWorkflows = workflowStore.workflows
+
+        // Keep friction detector + key frame analyzer in sync with saved workflows
+        workflowStore.$workflows
+            .sink { [weak self] workflows in
+                self?.frictionDetector.savedWorkflows = workflows
+                // Build summaries for Haiku vision recognition
+                self?.keyFrameAnalyzer.savedWorkflowSummaries = workflows.map { wf in
+                    "- \"\(wf.name)\": \(wf.steps.map(\.description).joined(separator: " → "))"
+                }.joined(separator: "\n")
+            }
+            .store(in: &cancellables)
+
+        // Wire Haiku workflow recognition → friction detector
+        keyFrameAnalyzer.onWorkflowRecognized = { [weak self] workflowName, confidence in
+            guard let self = self else { return }
+            // Find the matching saved workflow
+            guard let workflow = self.workflowStore.workflows.first(where: { $0.name == workflowName }) else { return }
+
+            let signal = FrictionDetector.FrictionSignal(
+                timestamp: Date(),
+                pattern: .recognizedWorkflow,
+                involvedApps: workflow.steps.map(\.tool).unique(),
+                description: "This looks like your '\(workflowName)' workflow",
+                capability: nil,
+                suggestion: "I recognized '\(workflowName)' — want me to run it for you?",
+                confidence: confidence,
+                isActionable: true,
+                matchedWorkflow: workflow
+            )
+            self.frictionDetector.surfaceExternal(signal)
+        }
+
         // Wire file activity monitor into friction detector + key frame analyzer
         fileActivityMonitor.onFileEvent = { [weak self] fileEvent in
             self?.frictionDetector.recordFileEvent(fileEvent)
@@ -199,6 +239,11 @@ final class AppState: ObservableObject {
 
             print("[Autoclaw/ARIA] Friction detected: \(signal.description)")
 
+            // If it's a recognized workflow, log the match
+            if signal.pattern == .recognizedWorkflow, let wf = signal.matchedWorkflow {
+                print("[Autoclaw/ARIA] Matched learned workflow: '\(wf.name)' (\(wf.steps.count) steps)")
+            }
+
             // If no installed capability, trigger discovery in background
             if !signal.isActionable, signal.involvedApps.count >= 2 {
                 Task {
@@ -209,6 +254,50 @@ final class AppState: ObservableObject {
                     )
                 }
             }
+        }
+
+        // Start browser bridge WebSocket server (always on, lightweight)
+        browserBridge.start()
+
+        // Wire DOM events from Chrome extension into the event buffer
+        browserBridge.onDOMEvent = { [weak self] event in
+            guard let self = self else { return }
+            // Buffer events during learn mode recording
+            if self.isLearnRecording {
+                self.browserEventBuffer.append(event)
+                // Also surface in the thread as a learn event
+                let workflowEvent = WorkflowEvent(
+                    type: .click,
+                    app: "Chrome",
+                    window: event.pageTitle ?? "",
+                    description: self.domEventDescription(event),
+                    data: event.value,
+                    ocrContext: nil,
+                    elapsed: 0
+                )
+                self.threadMessages.append(.learnEvent(event: workflowEvent))
+            }
+        }
+    }
+
+    /// Human-readable description of a DOM event for thread display
+    private func domEventDescription(_ event: BrowserDOMEvent) -> String {
+        switch event.type {
+        case .click:
+            let target = event.elementText ?? event.selector ?? "element"
+            let page = event.pageTitle ?? event.url ?? ""
+            return "Clicked '\(target)' on \(page)"
+        case .input:
+            let field = event.fieldName ?? "field"
+            let value = event.value ?? ""
+            return "Typed '\(value)' in \(field)"
+        case .navigate:
+            return "Navigated to \(event.url ?? "page")"
+        case .submit:
+            return "Submitted form on \(event.pageTitle ?? event.url ?? "page")"
+        case .select:
+            let field = event.fieldName ?? "dropdown"
+            return "Selected '\(event.value ?? "")' in \(field)"
         }
     }
 
@@ -912,8 +1001,15 @@ final class AppState: ObservableObject {
 
         workflowRecorder.startRecording(projectId: project.id)
         isLearnRecording = true
+        browserEventBuffer = []
         statusLine = "Recording workflow..."
         showThread = true
+
+        // Tell Chrome extension to start capturing DOM events
+        if browserBridge.isConnected {
+            browserBridge.startRecording()
+            statusLine = "Recording workflow + browser..."
+        }
 
         // Observe recorder events to forward clicks to the thread
         workflowRecorder.$events
@@ -927,11 +1023,14 @@ final class AppState: ObservableObject {
             }
             .store(in: &cancellables)
 
-        print("[Autoclaw] Learn recording started")
+        print("[Autoclaw] Learn recording started (browser bridge: \(browserBridge.isConnected ? "connected" : "not connected"))")
     }
 
     func stopLearnRecording() {
         guard isLearnRecording else { return }
+
+        // Stop Chrome extension recording
+        browserBridge.stopRecording()
 
         guard let recording = workflowRecorder.stopRecording() else {
             isLearnRecording = false
@@ -947,18 +1046,29 @@ final class AppState: ObservableObject {
         let firstEvents = recording.events.prefix(3).map(\.description)
         workflowNameDraft = firstEvents.first ?? "Untitled workflow"
 
-        // Extract steps using AI
+        // Gather key frame screenshots captured during the recording
+        let screenshotPaths = keyFrameAnalyzer?.recentFramePaths(limit: 8) ?? []
+
+        // Build capability summary so extraction maps steps to real MCP tools
+        let capSummary = buildCapabilitySummary()
+
+        // Gather DOM events from Chrome extension (if connected)
+        let domEvents = browserEventBuffer
+
+        // Extract steps using AI — with screenshots, capabilities, and DOM events
         Task { @MainActor in
             do {
                 let steps = try await WorkflowExtractor.extractSteps(
                     from: recording,
-                    using: claudeCodeRunner,
-                    model: .sonnet,
-                    savedWorkflows: self.workflowStore.workflows
+                    model: self.selectedModel,
+                    savedWorkflows: self.workflowStore.workflows,
+                    screenshotPaths: screenshotPaths,
+                    capabilities: capSummary,
+                    domEvents: domEvents
                 )
                 self.extractedSteps = steps
                 self.statusLine = "\(steps.count) steps extracted"
-                print("[Autoclaw] Extracted \(steps.count) workflow steps")
+                print("[Autoclaw] Extracted \(steps.count) workflow steps (with \(screenshotPaths.count) screenshots, \(domEvents.count) DOM events)")
             } catch {
                 print("[Autoclaw] Step extraction failed: \(error)")
                 self.extractedSteps = []
@@ -966,6 +1076,8 @@ final class AppState: ObservableObject {
                 self.threadMessages.append(.error(message: "Step extraction failed: \(error.localizedDescription)"))
             }
             self.isExtractingSteps = false
+            // Clear DOM event buffer after extraction
+            self.browserEventBuffer = []
         }
     }
 
@@ -1005,7 +1117,29 @@ final class AppState: ObservableObject {
         currentRecording = nil
         extractedSteps = []
         workflowNameDraft = ""
+        browserEventBuffer = []
         statusLine = "Recording discarded"
+    }
+
+    /// Build a human-readable summary of installed capabilities for extraction prompt context
+    private func buildCapabilitySummary() -> String {
+        let caps = capabilityMap.capabilities
+        guard !caps.isEmpty else { return "" }
+
+        var lines: [String] = []
+        // Group by provider
+        var byProvider: [String: [CapabilityMap.Capability]] = [:]
+        for cap in caps where cap.isInstalled {
+            byProvider[cap.provider, default: []].append(cap)
+        }
+
+        for (provider, providerCaps) in byProvider.sorted(by: { $0.key < $1.key }) {
+            let actions = providerCaps.flatMap(\.actions).unique()
+            let apps = providerCaps.map(\.sourceApp).unique()
+            lines.append("- **\(provider)**: \(providerCaps.map(\.name).joined(separator: ", ")) — apps: \(apps.joined(separator: ", ")) — actions: \(actions.joined(separator: ", "))")
+        }
+
+        return lines.joined(separator: "\n")
     }
 
     func executeWorkflow(_ workflow: SavedWorkflow) {
@@ -1175,5 +1309,14 @@ final class AppState: ObservableObject {
                 self?.showThread = true
             }
         }
+    }
+}
+
+// MARK: - Array Helpers
+
+extension Array where Element: Hashable {
+    func unique() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
     }
 }

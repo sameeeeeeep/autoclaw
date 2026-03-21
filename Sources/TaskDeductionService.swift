@@ -73,7 +73,8 @@ final class TaskDeductionService: @unchecked Sendable {
                 process.arguments = [
                     "--model", model.rawValue,
                     "-p", prompt,
-                    "--output-format", "json"
+                    "--output-format", "json",
+                    "--dangerously-skip-permissions"
                 ]
 
                 // Strip Claude Code env vars to avoid nested session guard

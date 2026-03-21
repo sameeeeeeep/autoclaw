@@ -280,10 +280,10 @@ struct SidebarView: View {
             VStack(alignment: .leading, spacing: waveform ? 2 : 1) {
                 if waveform { waveformView(on: active, color: color) }
                 else if let t = title {
-                    Text(t).font(.system(size: 10, weight: .semibold))
+                    Text(t).font(.system(size: 11, weight: .semibold))
                         .foregroundColor(active ? Ap.textPrimary : (enabled ? Ap.textSecondary : Ap.textOff))
                 }
-                Text(sub).font(.system(size: waveform ? 7 : 8, weight: .medium))
+                Text(sub).font(.system(size: waveform ? 8 : 9, weight: .medium))
                     .foregroundColor(active ? Ap.textSecondary : (enabled ? Ap.textTertiary : Ap.textOff.opacity(0.6)))
             }
             Spacer()
@@ -357,22 +357,22 @@ struct SidebarView: View {
 
             // Status line from AppState
             Text(appState.statusLine)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(statusColor)
                 .lineLimit(1)
                 .animation(.easeInOut(duration: 0.2), value: appState.statusLine)
 
             // Learn mode: recording info
             if appState.isLearnRecording {
-                HStack(spacing: 4) {
-                    Circle().fill(Color.yellow).frame(width: 5, height: 5)
+                HStack(spacing: 5) {
+                    Circle().fill(Color.yellow).frame(width: 6, height: 6)
                     Text("\(appState.workflowRecorder.events.count) events")
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.yellow.opacity(0.7))
                     Text("·")
                         .foregroundColor(Ap.textDim)
                     Text(appState.workflowRecorder.elapsedFormatted)
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.yellow.opacity(0.5))
                 }
             }
@@ -385,30 +385,30 @@ struct SidebarView: View {
             // Brief context line
             if appState.isExecuting, !appState.executionOutput.isEmpty {
                 Text(String(appState.executionOutput.suffix(50)))
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.green.opacity(0.7))
                     .lineLimit(2)
             } else if appState.currentSuggestion != nil || appState.pendingClarification != nil || appState.deductionError != nil {
-                Text("See toast").font(.system(size: 8)).foregroundColor(Ap.textDim)
+                Text("See toast").font(.system(size: 9)).foregroundColor(Ap.textDim)
             }
 
             // Project chips when needed
             if !appState.sessionActive || appState.needsProjectSelection {
                 pChips
             } else if let p = appState.selectedProject {
-                HStack(spacing: 4) {
-                    Image(systemName: "folder.fill").font(.system(size: 8)).foregroundColor(Ap.textTertiary)
-                    Text(p.name).font(.system(size: 9, weight: .medium)).foregroundColor(Ap.textSecondary)
+                HStack(spacing: 5) {
+                    Image(systemName: "folder.fill").font(.system(size: 9)).foregroundColor(Ap.textTertiary)
+                    Text(p.name).font(.system(size: 10, weight: .medium)).foregroundColor(Ap.textSecondary)
                 }
             }
 
             // Thread info
             if let thread = appState.currentThread, thread.taskCount > 0 {
                 Text("\(thread.taskCount) tasks in session")
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(Ap.textDim)
             }
-        }.padding(12).frame(maxWidth: .infinity, maxHeight: .infinity)
+        }.padding(14).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var statusIndicator: some View {
@@ -456,7 +456,7 @@ struct SidebarView: View {
 
     private var pChips: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("PROJECT").font(.system(size: 8, weight: .bold, design: .monospaced)).foregroundColor(Ap.textTertiary).tracking(1)
+            Text("PROJECT").font(.system(size: 9, weight: .bold, design: .monospaced)).foregroundColor(Ap.textTertiary).tracking(1)
             FlowLayout(spacing: 5) {
                 pChip("None", i: 0, sel: appState.selectedProject == nil) { appState.selectedProject = nil }
                 ForEach(Array(appState.projectStore.projects.enumerated()), id: \.element.id) { i, p in
@@ -472,9 +472,9 @@ struct SidebarView: View {
     private func pChip(_ name: String, i: Int, sel: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 3) {
-                Text("\(i)").font(.system(size: 8, weight: .bold, design: .monospaced)).foregroundColor(sel ? .white.opacity(0.7) : Ap.textTertiary)
-                Text(name).font(.system(size: 10, weight: sel ? .semibold : .regular)).foregroundColor(sel ? .white : Ap.textSecondary)
-            }.padding(.horizontal, 8).padding(.vertical, 4)
+                Text("\(i)").font(.system(size: 9, weight: .bold, design: .monospaced)).foregroundColor(sel ? .white.opacity(0.7) : Ap.textTertiary)
+                Text(name).font(.system(size: 11, weight: sel ? .semibold : .regular)).foregroundColor(sel ? .white : Ap.textSecondary)
+            }.padding(.horizontal, 10).padding(.vertical, 5)
                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(sel ? Color.cyan.opacity(0.45) : Ap.rowTile.opacity(Ap.rowOff)))
                 .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(sel ? Color.cyan.opacity(0.4) : .clear, lineWidth: 1))
                 .shadow(color: sel ? Color.cyan.opacity(0.3) : .clear, radius: 4)
@@ -497,10 +497,10 @@ struct SidebarView: View {
     private func logBar(dot: Color, text: String, time: String) -> some View {
         HStack(spacing: 6) {
             Circle().fill(dot).frame(width: 4, height: 4)
-            Text(text).font(.system(size: 8)).foregroundColor(Ap.textSecondary).lineLimit(1)
+            Text(text).font(.system(size: 9)).foregroundColor(Ap.textSecondary).lineLimit(1)
             Spacer()
-            Text(time).font(.system(size: 7)).foregroundColor(Ap.textTertiary)
-        }.padding(.horizontal, 8).padding(.vertical, 4).frame(height: 22)
+            Text(time).font(.system(size: 8)).foregroundColor(Ap.textTertiary)
+        }.padding(.horizontal, 10).padding(.vertical, 5).frame(height: 26)
             .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Ap.logBg))
     }
 

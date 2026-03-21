@@ -67,28 +67,35 @@ final class KeyFrameAnalyzer: ObservableObject {
     // MARK: - Configuration
 
     private static let maxStoredFrames = 30
-    private static let analysisCooldown: TimeInterval = 12      // min seconds between analyses
-    private static let periodicInterval: TimeInterval = 25      // periodic capture interval
+    private static let analysisWindow: TimeInterval = 60         // collect frames for 60s then analyze
+    private static let periodicInterval: TimeInterval = 10       // capture interval within the window
     private static let maxImageWidth = 1440                      // higher res for better analysis
     private static let jpegQuality: CGFloat = 0.7                // higher quality for vision
     private static let changeThreshold: CGFloat = 0.02           // 2% pixel difference = meaningful change
     private static let clickCooldown: TimeInterval = 1.0         // min seconds between click captures
+    private static let gridColumns = 3                           // frames per row in grid image
+    private static let maxFramesPerGrid = 6                      // max frames per grid image
 
     // MARK: - Private
 
     private var frames: [KeyFrame] = []
-    private var pendingFrames: [KeyFrame] = []   // captured but not yet analyzed
+    private var windowFrames: [KeyFrame] = []    // frames in the current 60s window
     private var lastAnalysisTime: Date = .distantPast
     private var lastClickCaptureTime: Date = .distantPast
     private var periodicTimer: Timer?
+    private var analysisTimer: Timer?             // fires every 60s to trigger analysis
     private var isActive = false
     private var previousAnalysisOutput: String?  // temporal context: feed previous analysis into next
 
-    private let runner: ClaudeCodeRunner
+    /// Callback for workflow recognition results
+    var onWorkflowRecognized: ((String, Double) -> Void)?  // (workflow name, confidence)
+
+    /// Saved workflow summaries for recognition (set by AppState)
+    var savedWorkflowSummaries: String = ""
+
     private let captureStream: ScreenCaptureStream
 
-    init(runner: ClaudeCodeRunner, captureStream: ScreenCaptureStream) {
-        self.runner = runner
+    init(captureStream: ScreenCaptureStream) {
         self.captureStream = captureStream
     }
 
@@ -105,13 +112,22 @@ final class KeyFrameAnalyzer: ObservableObject {
             }
         }
 
-        DebugLog.log("[KeyFrameAnalyzer] Started (change detection + window cropping enabled)")
+        // Analysis timer — every 60s, stitch collected frames into grids and send to Haiku
+        analysisTimer = Timer.scheduledTimer(withTimeInterval: Self.analysisWindow, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.analyzeWindow()
+            }
+        }
+
+        DebugLog.log("[KeyFrameAnalyzer] Started (60s analysis windows, change detection enabled)")
     }
 
     func stop() {
         isActive = false
         periodicTimer?.invalidate()
         periodicTimer = nil
+        analysisTimer?.invalidate()
+        analysisTimer = nil
         DebugLog.log("[KeyFrameAnalyzer] Stopped (\(frames.count) frames captured)")
     }
 
@@ -195,7 +211,7 @@ final class KeyFrameAnalyzer: ObservableObject {
             intent: nil
         )
 
-        pendingFrames.append(frame)
+        windowFrames.append(frame)
         frames.append(frame)
 
         // Trim old frames
@@ -211,12 +227,7 @@ final class KeyFrameAnalyzer: ObservableObject {
         }
 
         let cropInfo = windowRect != nil ? " [window crop]" : " [full screen]"
-        DebugLog.log("[KeyFrameAnalyzer] Captured frame: \(trigger.rawValue) in \(app)\(cropInfo) (\(pendingFrames.count) pending)")
-
-        // Trigger analysis if we have enough pending frames and cooldown elapsed
-        if pendingFrames.count >= 3 || Date().timeIntervalSince(lastAnalysisTime) > Self.analysisCooldown * 2 {
-            triggerAnalysis()
-        }
+        DebugLog.log("[KeyFrameAnalyzer] Captured frame: \(trigger.rawValue) in \(app)\(cropInfo) (window: \(windowFrames.count) frames)")
     }
 
     // MARK: - Change Detection (Apple Vision Neural Engine)
@@ -401,117 +412,100 @@ final class KeyFrameAnalyzer: ObservableObject {
         }
     }
 
-    // MARK: - Analysis
+    // MARK: - 60s Window Analysis
 
-    private func triggerAnalysis() {
-        guard !isAnalyzing,
-              !pendingFrames.isEmpty,
-              Date().timeIntervalSince(lastAnalysisTime) >= Self.analysisCooldown else { return }
+    /// Called every 60s. Takes all meaningful-change frames from the window,
+    /// stitches them into grid images (max 6 per grid), and sends to Haiku
+    /// for activity understanding + workflow recognition.
+    private func analyzeWindow() {
+        guard !isAnalyzing, !windowFrames.isEmpty else { return }
 
+        let framesToAnalyze = windowFrames
+        windowFrames = []  // reset for next window
         isAnalyzing = true
         lastAnalysisTime = Date()
-        let framesToAnalyze = pendingFrames
-        pendingFrames = []
+
+        DebugLog.log("[KeyFrameAnalyzer] Analyzing window: \(framesToAnalyze.count) frames")
 
         Task {
-            await analyze(frames: framesToAnalyze)
+            await analyzeWithGrids(frames: framesToAnalyze)
             self.isAnalyzing = false
         }
     }
 
-    private func analyze(frames framesToAnalyze: [KeyFrame]) async {
-        // Build frame descriptions with richer metadata
-        let frameDescriptions = framesToAnalyze.map { frame in
-            var desc = "[\(frame.trigger.rawValue)] \(frame.app) at \(timeString(frame.timestamp))"
-            if let rect = frame.windowRect {
-                desc += " (window: \(Int(rect.width))x\(Int(rect.height)))"
-            }
+    private func analyzeWithGrids(frames framesToAnalyze: [KeyFrame]) async {
+        // Stitch frames into grid images
+        let gridPaths = stitchGrids(from: framesToAnalyze)
+        guard !gridPaths.isEmpty else {
+            DebugLog.log("[KeyFrameAnalyzer] No grids generated")
+            return
+        }
+
+        // Build frame metadata
+        let frameDescriptions = framesToAnalyze.enumerated().map { (i, frame) in
+            var desc = "Frame \(i+1): [\(frame.trigger.rawValue)] \(frame.app) at \(timeString(frame.timestamp))"
             if let cursor = frame.cursorPosition {
                 desc += " (click at \(Int(cursor.x)),\(Int(cursor.y)))"
             }
             return desc
         }.joined(separator: "\n")
 
-        // Collect image paths — include both window crops and full-screen context
-        var imagePaths: [String] = []
-        for frame in framesToAnalyze {
-            imagePaths.append(frame.imagePath)
-            if let fullPath = frame.fullScreenPath {
-                imagePaths.append(fullPath)
-            }
-        }
+        // Build temporal context
+        let temporalContext = previousAnalysisOutput.map { prev in
+            "\n## Previous 60s window:\n\(prev)"
+        } ?? ""
 
-        // Build temporal context from previous analysis
-        let temporalContext: String
-        if let prev = previousAnalysisOutput {
-            temporalContext = """
+        // Build workflow recognition section
+        let workflowSection: String
+        if !savedWorkflowSummaries.isEmpty {
+            workflowSection = """
 
-            ## Previous Analysis (for temporal context — understand what changed)
-            \(prev)
+            ## Saved Workflows (check if current activity matches any)
+            \(savedWorkflowSummaries)
+
+            If the current activity matches a saved workflow, include in your response:
+            "matched_workflow": "workflow name",
+            "match_confidence": 0.0-1.0
+            Only match if the user is clearly doing the SAME workflow, not just using the same app.
             """
         } else {
-            temporalContext = ""
+            workflowSection = ""
         }
 
         let prompt = """
-        Analyze these \(framesToAnalyze.count) screenshots captured from a user's macOS session. \
-        They were taken at key moments (app switches, clipboard events, clicks, periodic captures). \
-        Some images are active-window crops (focused view) and some are full-screen captures (broader context).
+        You see grid images showing a user's macOS screen over the last 60 seconds. \
+        Each cell in the grid is a key frame captured at a meaningful visual change \
+        (app switch, click, clipboard event). Read left-to-right, top-to-bottom for chronological order.
 
-        Frame triggers:
+        Frame timeline:
         \(frameDescriptions)
         \(temporalContext)
+        \(workflowSection)
 
-        For each screenshot, describe in detail:
-        1. What app/website is shown and what specific page/view/tab is open
-        2. What the user is actively doing — be specific about the action (e.g. "editing row 3 of a spreadsheet", not just "using a spreadsheet")
-        3. What content is visible — document titles, data values, form fields, button labels, tab names
-        4. For click captures: what element the user likely clicked on based on cursor position
-
-        Then synthesize across all frames:
-        - **Current Activity**: One detailed sentence describing what the user is doing right now
-        - **Intent**: The higher-level goal they seem to be working toward (the why, not the what)
-        - **Workflow Stage**: Where they are in their workflow (e.g. "researching", "drafting", "reviewing", "transferring data", "configuring", "debugging")
-        - **Interaction Pattern**: How they're working (e.g. "copy-paste between apps", "filling out a form", "comparing two documents side by side", "iterating on a design")
-        - **UI Elements**: Key UI elements being interacted with (buttons, menus, panels, fields)
-        - **Data Types**: Types of data being worked with (text, code, images, tables, URLs, etc.)
-        - **Apps Involved**: List of apps/websites being used
+        Analyze the SEQUENCE of screens to understand:
+        1. What apps/websites is the user moving between?
+        2. What are they doing step by step?
+        3. What's the overall goal/intent?
 
         Respond as JSON:
         {
-          "frames": [
-            {"description": "...", "app": "...", "action": "...", "visible_content": "..."}
-          ],
-          "current_activity": "...",
-          "intent": "...",
-          "workflow_stage": "...",
-          "interaction_pattern": "...",
-          "ui_elements": ["..."],
-          "data_types": ["..."],
-          "involved_apps": ["..."]
+          "current_activity": "One sentence: what the user is doing right now",
+          "intent": "The higher-level goal (why)",
+          "workflow_stage": "researching|drafting|reviewing|transferring|configuring|debugging|browsing|communicating",
+          "interaction_pattern": "how they're working (copy-paste, form-fill, comparing, etc.)",
+          "involved_apps": ["App1", "App2"],
+          "ui_elements": ["element1", "element2"],
+          "data_types": ["text", "code", "images", etc.],
+          "matched_workflow": null,
+          "match_confidence": 0
         }
         """
 
         do {
-            var fullPrompt = prompt
-            for path in imagePaths {
-                fullPrompt += "\n\nImage: \(path)"
-            }
-
-            var output = ""
-            for try await chunk in runner.executeDirect(
-                prompt: fullPrompt,
-                project: Project(id: UUID(), name: "keyframe-analysis", path: NSTemporaryDirectory()),
-                model: .sonnet,
-                sessionId: nil,
-                singleShot: true
-            ) {
-                output += chunk
-            }
+            let output = try await callHaiku(prompt: prompt, imagePaths: gridPaths)
 
             if let context = parseAnalysis(output, framesToAnalyze: framesToAnalyze) {
                 latestContext = context
-                // Save this analysis as temporal context for the next round
                 previousAnalysisOutput = """
                 Activity: \(context.currentActivity)
                 Intent: \(context.inferredIntent ?? "unknown")
@@ -519,11 +513,210 @@ final class KeyFrameAnalyzer: ObservableObject {
                 Pattern: \(context.interactionPattern ?? "unknown")
                 Apps: \(context.involvedApps.joined(separator: ", "))
                 """
-                DebugLog.log("[KeyFrameAnalyzer] Analysis complete: \(context.currentActivity)")
+                DebugLog.log("[KeyFrameAnalyzer] Window analysis: \(context.currentActivity)")
             }
+
+            // Check for workflow match in response
+            if let jsonStart = output.firstIndex(of: "{"),
+               let jsonEnd = output.lastIndex(of: "}") {
+                let jsonStr = String(output[jsonStart...jsonEnd])
+                if let jsonData = jsonStr.data(using: .utf8),
+                   let result = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                   let matchedName = result["matched_workflow"] as? String,
+                   let confidence = result["match_confidence"] as? Double,
+                   confidence > 0.7 {
+                    DebugLog.log("[KeyFrameAnalyzer] Workflow match: '\(matchedName)' (\(String(format: "%.0f", confidence * 100))%)")
+                    onWorkflowRecognized?(matchedName, confidence)
+                }
+            }
+
         } catch {
-            DebugLog.log("[KeyFrameAnalyzer] Analysis failed: \(error)")
+            DebugLog.log("[KeyFrameAnalyzer] Window analysis failed: \(error)")
         }
+
+        // Clean up grid images
+        for path in gridPaths {
+            try? FileManager.default.removeItem(atPath: path)
+        }
+    }
+
+    // MARK: - Grid Stitching
+
+    /// Stitches key frames into grid images (3 columns, max 6 per grid).
+    /// Returns paths to the grid JPEG files.
+    private func stitchGrids(from framesToStitch: [KeyFrame]) -> [String] {
+        var gridPaths: [String] = []
+
+        // Split frames into chunks of maxFramesPerGrid
+        let chunks = stride(from: 0, to: framesToStitch.count, by: Self.maxFramesPerGrid).map {
+            Array(framesToStitch[$0..<min($0 + Self.maxFramesPerGrid, framesToStitch.count)])
+        }
+
+        for (gridIndex, chunk) in chunks.enumerated() {
+            // Load images
+            var images: [(NSImage, String)] = []  // (image, label)
+            for frame in chunk {
+                guard let nsImage = NSImage(contentsOfFile: frame.imagePath) else { continue }
+                let label = "\(timeString(frame.timestamp)) [\(frame.trigger.rawValue)] \(frame.app)"
+                images.append((nsImage, label))
+            }
+            guard !images.isEmpty else { continue }
+
+            // Calculate grid dimensions
+            let cols = min(Self.gridColumns, images.count)
+            let rows = (images.count + cols - 1) / cols
+            let cellWidth = 480    // each cell 480px wide
+            let cellHeight = 320   // each cell 320px tall
+            let labelHeight = 20
+            let totalW = cols * cellWidth
+            let totalH = rows * (cellHeight + labelHeight)
+
+            // Create the grid image
+            guard let gridRep = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: totalW,
+                pixelsHigh: totalH,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            ) else { continue }
+
+            NSGraphicsContext.saveGraphicsState()
+            guard let ctx = NSGraphicsContext(bitmapImageRep: gridRep) else {
+                NSGraphicsContext.restoreGraphicsState()
+                continue
+            }
+            NSGraphicsContext.current = ctx
+
+            // Fill background
+            NSColor.black.setFill()
+            NSRect(x: 0, y: 0, width: totalW, height: totalH).fill()
+
+            // Draw each frame into its grid cell
+            for (i, (image, label)) in images.enumerated() {
+                let col = i % cols
+                let row = i / cols
+                let x = col * cellWidth
+                // NSImage draws with origin at bottom-left, but we want top-to-bottom order
+                let y = totalH - (row + 1) * (cellHeight + labelHeight)
+
+                // Draw the frame image scaled to fit cell
+                let cellRect = NSRect(x: x + 2, y: y + labelHeight, width: cellWidth - 4, height: cellHeight - 4)
+                image.draw(in: cellRect, from: .zero, operation: .copy, fraction: 1.0)
+
+                // Draw label below the image
+                let labelRect = NSRect(x: x + 4, y: y + 2, width: cellWidth - 8, height: labelHeight - 2)
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 10),
+                    .foregroundColor: NSColor.white
+                ]
+                (label as NSString).draw(in: labelRect, withAttributes: attrs)
+            }
+
+            NSGraphicsContext.restoreGraphicsState()
+
+            // Save grid as JPEG
+            guard let jpegData = gridRep.representation(using: .jpeg, properties: [.compressionFactor: 0.75]) else { continue }
+            let path = (NSTemporaryDirectory() as NSString).appendingPathComponent(
+                "autoclaw_grid_\(gridIndex)_\(UUID().uuidString.prefix(6)).jpg"
+            )
+            do {
+                try jpegData.write(to: URL(fileURLWithPath: path))
+                gridPaths.append(path)
+                DebugLog.log("[KeyFrameAnalyzer] Grid \(gridIndex): \(images.count) frames → \(path)")
+            } catch {
+                DebugLog.log("[KeyFrameAnalyzer] Failed to save grid: \(error)")
+            }
+        }
+
+        return gridPaths
+    }
+
+    // MARK: - Haiku CLI Call
+
+    private func callHaiku(prompt: String, imagePaths: [String]) async throws -> String {
+        guard let claudeURL = findCLI() else {
+            throw AutoclawError.executionError("claude CLI not found")
+        }
+
+        // Build prompt with image references
+        var fullPrompt = prompt
+        for path in imagePaths {
+            fullPrompt += "\n\nImage: \(path)"
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = claudeURL
+                process.arguments = ["--model", "haiku", "-p", fullPrompt, "--output-format", "json", "--dangerously-skip-permissions"]
+
+                var env = ProcessInfo.processInfo.environment
+                env.removeValue(forKey: "CLAUDECODE")
+                env.removeValue(forKey: "CLAUDE_CODE_ENTRYPOINT")
+                env.removeValue(forKey: "CLAUDE_CODE_OAUTH_TOKEN")
+
+                let apiKey = AppSettings.shared.anthropicAPIKey
+                if !apiKey.isEmpty {
+                    if apiKey.contains("-oat") {
+                        env["CLAUDE_CODE_OAUTH_TOKEN"] = apiKey
+                        env.removeValue(forKey: "ANTHROPIC_API_KEY")
+                    } else {
+                        env["ANTHROPIC_API_KEY"] = apiKey
+                        env.removeValue(forKey: "CLAUDE_CODE_OAUTH_TOKEN")
+                    }
+                }
+                process.environment = env
+
+                let stdout = Pipe()
+                let stderr = Pipe()
+                process.standardOutput = stdout
+                process.standardError = stderr
+
+                do {
+                    try process.run()
+                    let outData = stdout.fileHandleForReading.readDataToEndOfFile()
+                    process.waitUntilExit()
+
+                    let raw = String(data: outData, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+                    if process.terminationStatus != 0 {
+                        continuation.resume(throwing: AutoclawError.executionError("Haiku CLI exited \(process.terminationStatus)"))
+                        return
+                    }
+
+                    // Parse JSON envelope
+                    if let data = raw.data(using: .utf8),
+                       let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let result = envelope["result"] as? String {
+                        continuation.resume(returning: result)
+                        return
+                    }
+                    continuation.resume(returning: raw)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func findCLI() -> URL? {
+        let localBin = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/bin/claude").path
+        if FileManager.default.isExecutableFile(atPath: localBin) {
+            return URL(fileURLWithPath: localBin)
+        }
+        for path in ["/usr/local/bin/claude", "/opt/homebrew/bin/claude", "/usr/bin/claude"] {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return URL(fileURLWithPath: path)
+            }
+        }
+        return nil
     }
 
     private func parseAnalysis(_ output: String, framesToAnalyze: [KeyFrame]) -> ContextSnapshot? {
@@ -609,7 +802,7 @@ final class KeyFrameAnalyzer: ObservableObject {
             }
         }
         frames.removeAll()
-        pendingFrames.removeAll()
+        windowFrames.removeAll()
         previousAnalysisOutput = nil
     }
 

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      width: 220px;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 13px;
+      color: #e0e0e0;
+      background: #1a1a1a;
+      margin: 0;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .header h1 {
+      font-size: 14px;
+      font-weight: 600;
+      margin: 0;
+      color: #fff;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot.connected { background: #34C759; }
+    .dot.disconnected { background: #FF3B30; }
+    .dot.recording { background: #FF3B30; animation: pulse 1s infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .status {
+      color: #999;
+      font-size: 11px;
+    }
+    .info {
+      margin-top: 10px;
+      padding: 8px;
+      background: #2a2a2a;
+      border-radius: 6px;
+      font-size: 11px;
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="dot" id="dot"></div>
+    <h1>Autoclaw</h1>
+  </div>
+  <div class="status" id="status">Checking...</div>
+  <div class="info">
+    Recording is controlled by the Autoclaw macOS app. Switch to Learn mode and start recording there.
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

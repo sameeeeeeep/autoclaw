@@ -27,6 +27,22 @@ final class FrictionDetector: ObservableObject {
         let suggestion: String              // "I can sync Notion → Sheets automatically"
         let confidence: Double              // 0-1
         let isActionable: Bool              // true if we have a capability to offer
+        let matchedWorkflow: SavedWorkflow? // non-nil when pattern == .recognizedWorkflow
+
+        init(timestamp: Date, pattern: FrictionPattern, involvedApps: [String],
+             description: String, capability: CapabilityMap.Capability?,
+             suggestion: String, confidence: Double, isActionable: Bool,
+             matchedWorkflow: SavedWorkflow? = nil) {
+            self.timestamp = timestamp
+            self.pattern = pattern
+            self.involvedApps = involvedApps
+            self.description = description
+            self.capability = capability
+            self.suggestion = suggestion
+            self.confidence = confidence
+            self.isActionable = isActionable
+            self.matchedWorkflow = matchedWorkflow
+        }
 
         /// Whether this should be surfaced to the user
         var shouldSurface: Bool {
@@ -40,6 +56,7 @@ final class FrictionDetector: ObservableObject {
         case repetitiveNav      // same app sequence repeated
         case manualLookup       // switch to app, copy info, switch back
         case repeatedSearch     // searching for same/similar things
+        case recognizedWorkflow // matches a previously learned workflow
     }
 
     // MARK: - State
@@ -56,6 +73,12 @@ final class FrictionDetector: ObservableObject {
 
     /// Optional key frame analyzer for richer context
     var keyFrameAnalyzer: KeyFrameAnalyzer?
+
+    /// Workflow matcher for recognizing learned workflows in passive activity
+    var workflowMatcher: WorkflowMatcher?
+
+    /// Saved workflows to match against (updated by AppState when workflows change)
+    var savedWorkflows: [SavedWorkflow] = []
 
     // MARK: - Activity Buffer
 
@@ -152,7 +175,10 @@ final class FrictionDetector: ObservableObject {
         let recent = activityBuffer.filter { now.timeIntervalSince($0.timestamp) < recentWindow }
         guard recent.count >= 2 else { return }
 
-        // Check each pattern type
+        // Check learned workflow recognition FIRST (highest value)
+        if let signal = detectRecognizedWorkflow(recent) { surfaceIfNew(signal) }
+
+        // Then check heuristic pattern types
         if let signal = detectCrossAppTransfer(recent) { surfaceIfNew(signal) }
         if let signal = detectFileShuttle(recent) { surfaceIfNew(signal) }
         if let signal = detectManualLookup(recent) { surfaceIfNew(signal) }
@@ -334,6 +360,74 @@ final class FrictionDetector: ObservableObject {
         return nil
     }
 
+    /// Detect: current passive activity matches a previously learned & saved workflow.
+    /// Uses WorkflowMatcher (NLEmbedding similarity) to compare recent activity
+    /// against all saved workflows. This is the Kofia-level recognition.
+    ///
+    /// Guards against false positives:
+    /// - Requires at least 5 recent events (enough signal to match meaningfully)
+    /// - Requires at least 2 distinct apps involved (single-app activity is too generic)
+    /// - High similarity threshold (0.75) — word embeddings produce high scores on generic terms
+    /// - Only matches workflows with 3+ steps (trivial workflows match everything)
+    private func detectRecognizedWorkflow(_ recent: [ActivityEvent]) -> FrictionSignal? {
+        guard let matcher = workflowMatcher, !savedWorkflows.isEmpty else { return nil }
+        guard recent.count >= 5 else { return nil }
+
+        // Require at least 2 distinct apps to avoid matching on single-app generic activity
+        let distinctApps = Set(recent.map(\.app)).filter { !$0.isEmpty }
+        guard distinctApps.count >= 2 else { return nil }
+
+        // Only match against workflows with enough steps to be meaningful
+        let meaningfulWorkflows = savedWorkflows.filter { $0.steps.count >= 3 }
+
+        // Convert passive ActivityEvents into WorkflowEvents for the matcher
+        let workflowEvents = recent.map { event -> WorkflowEvent in
+            let type: WorkflowEventType
+            switch event.type {
+            case .appSwitch: type = .appSwitch
+            case .clipboard: type = .clipboard
+            case .click:     type = .click
+            default:         type = .appSwitch
+            }
+            return WorkflowEvent(
+                type: type,
+                app: event.app,
+                window: event.section ?? "",
+                description: "\(event.app) \(event.section ?? "") \(event.data ?? "")",
+                data: event.data,
+                ocrContext: {
+                    if case .click(let ctx) = event.type { return ctx }
+                    return nil
+                }()
+            )
+        }
+
+        let matches = matcher.findSimilarWorkflows(
+            events: workflowEvents,
+            savedWorkflows: meaningfulWorkflows,
+            topK: 1
+        )
+
+        // High threshold — NLEmbedding word-level averaging produces inflated scores
+        // on generic app names like "Chrome", "Gmail". 0.75 means genuinely similar.
+        guard let best = matches.first, best.score > 0.75 else { return nil }
+
+        let workflow = best.workflow
+        let apps = Set(recent.map(\.app)).filter { !$0.isEmpty }
+
+        return FrictionSignal(
+            timestamp: Date(),
+            pattern: .recognizedWorkflow,
+            involvedApps: Array(apps),
+            description: "This looks like your '\(workflow.name)' workflow",
+            capability: nil,
+            suggestion: "I learned this workflow before — want me to run '\(workflow.name)' for you?",
+            confidence: min(best.score + 0.1, 0.95),  // boost slightly since it's a learned match
+            isActionable: true,
+            matchedWorkflow: workflow
+        )
+    }
+
     // MARK: - Surfacing
 
     /// Enrich a friction signal with key frame context if available
@@ -363,17 +457,25 @@ final class FrictionDetector: ObservableObject {
             capability: signal.capability,
             suggestion: signal.suggestion,
             confidence: min(signal.confidence + 0.1, 1.0),  // boost confidence with visual context
-            isActionable: signal.isActionable
+            isActionable: signal.isActionable,
+            matchedWorkflow: signal.matchedWorkflow
         )
     }
 
     private func surfaceIfNew(_ signal: FrictionSignal) {
         // Create a key for this pattern to prevent re-surfacing
-        let key = "\(signal.pattern.rawValue):\(signal.involvedApps.sorted().joined(separator: "+"))"
+        var key = "\(signal.pattern.rawValue):\(signal.involvedApps.sorted().joined(separator: "+"))"
+        // For recognized workflows, include the workflow name for specificity
+        if let wf = signal.matchedWorkflow {
+            key += ":\(wf.name)"
+        }
+
+        // Longer cooldown for workflow recognition (10 min) — don't nag
+        let cooldown = signal.pattern == .recognizedWorkflow ? 600.0 : Self.cooldownInterval
 
         // Check cooldown
         if let lastTime = lastSurfacedPatterns[key],
-           Date().timeIntervalSince(lastTime) < Self.cooldownInterval {
+           Date().timeIntervalSince(lastTime) < cooldown {
             return
         }
 
@@ -399,6 +501,11 @@ final class FrictionDetector: ObservableObject {
 
     func dismissFriction() {
         activeFriction = nil
+    }
+
+    /// Surface a signal from an external source (e.g. KeyFrameAnalyzer Haiku recognition)
+    func surfaceExternal(_ signal: FrictionSignal) {
+        surfaceIfNew(signal)
     }
 
     // MARK: - Buffer Management
