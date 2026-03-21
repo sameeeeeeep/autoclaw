@@ -86,11 +86,12 @@ final class FileActivityMonitor: ObservableObject {
     private var scanTimer: Timer?
 
     /// Directories to watch for file activity
+    /// Only watch Documents and temp (for autoclaw's own files).
+    /// Desktop and Downloads were triggering unnecessary permission dialogs
+    /// and capturing noise (browser downloads, screenshot files, etc.)
     private var watchedPaths: [String] {
         let home = NSHomeDirectory()
         return [
-            home + "/Downloads",
-            home + "/Desktop",
             home + "/Documents",
             NSTemporaryDirectory(),
         ]

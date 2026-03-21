@@ -512,6 +512,13 @@ final class AppState: ObservableObject {
         needsProjectSelection = false
         pendingVoiceText = ""
         liveTranscript = ""
+
+        // Persist thread messages before clearing session
+        if let thread = currentThread, !threadMessages.isEmpty {
+            sessionStore.saveMessages(threadMessages, for: thread.id)
+            print("[Autoclaw] Persisted \(threadMessages.count) messages for session \(thread.id)")
+        }
+
         currentSessionId = nil
 
         // Keep thread + messages visible so the toast shows "session ended" state
@@ -1002,6 +1009,7 @@ final class AppState: ObservableObject {
         workflowRecorder.startRecording(projectId: project.id)
         isLearnRecording = true
         browserEventBuffer = []
+        frictionDetector.isSuppressed = true  // Don't suggest workflows while learning a new one
         statusLine = "Recording workflow..."
         showThread = true
 
@@ -1034,10 +1042,12 @@ final class AppState: ObservableObject {
 
         guard let recording = workflowRecorder.stopRecording() else {
             isLearnRecording = false
+            frictionDetector.isSuppressed = false
             return
         }
 
         isLearnRecording = false
+        frictionDetector.isSuppressed = false
         currentRecording = recording
         isExtractingSteps = true
         statusLine = "Extracting steps..."

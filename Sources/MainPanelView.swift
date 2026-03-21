@@ -2,12 +2,14 @@ import SwiftUI
 
 enum PanelTab: String, CaseIterable {
     case home = "Home"
+    case workflows = "Workflows"
     case threads = "Threads"
     case settings = "Settings"
 
     var icon: String {
         switch self {
         case .home: return "house.fill"
+        case .workflows: return "brain.head.profile"
         case .threads: return "bubble.left.and.text.bubble.right"
         case .settings: return "gear"
         }
@@ -106,6 +108,8 @@ struct MainPanelView: View {
         switch selectedTab {
         case .home:
             HomeView(appState: appState)
+        case .workflows:
+            WorkflowsView(appState: appState)
         case .threads:
             if let thread = appState.viewingThread {
                 ThreadDetailView(appState: appState, thread: thread)
@@ -486,27 +490,117 @@ struct ThreadDetailView: View {
 
             Divider()
 
-            // Messages — show current threadMessages if this is the active session
+            // Messages — show current threadMessages if active, or load persisted messages
             if appState.currentSessionId == thread.id.uuidString && !appState.threadMessages.isEmpty {
                 SessionThreadView(appState: appState)
             } else {
-                // No persisted messages for past sessions yet
-                Spacer()
+                PersistedThreadView(appState: appState, threadId: thread.id, lastTaskTitle: thread.lastTaskTitle)
+            }
+        }
+    }
+}
+
+// MARK: - Persisted Thread View (loads messages from disk for past sessions)
+
+struct PersistedThreadView: View {
+    @ObservedObject var appState: AppState
+    let threadId: UUID
+    let lastTaskTitle: String?
+
+    @State private var messages: [ThreadMessage] = []
+    @State private var loaded = false
+
+    var body: some View {
+        Group {
+            if !loaded {
+                ProgressView("Loading messages...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if messages.isEmpty {
                 VStack(spacing: 10) {
+                    Spacer()
                     Image(systemName: "text.bubble")
                         .font(.system(size: 28))
                         .foregroundStyle(.tertiary)
-                    Text("Session messages aren't persisted yet")
+                    Text("No messages saved for this session")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
-                    if let lastTask = thread.lastTaskTitle {
+                    if let lastTask = lastTaskTitle {
                         Text("Last task: \(lastTask)")
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
                     }
+                    Spacer()
                 }
-                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(messages) { msg in
+                            persistedMessageRow(msg)
+                        }
+                    }
+                    .padding(16)
+                }
             }
+        }
+        .onAppear {
+            messages = appState.sessionStore.loadMessages(for: threadId)
+            loaded = true
+        }
+    }
+
+    @ViewBuilder
+    private func persistedMessageRow(_ msg: ThreadMessage) -> some View {
+        switch msg {
+        case .clipboard(_, let content, let app, _, _):
+            VStack(alignment: .leading, spacing: 4) {
+                if !app.isEmpty {
+                    Text(app).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                }
+                Text(content)
+                    .font(.system(size: 11, design: .monospaced))
+                    .lineLimit(6)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.03))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+        case .userMessage(_, let text, _):
+            HStack {
+                Spacer(minLength: 60)
+                Text(text)
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Color.accentColor.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+        case .execution(_, let output, _):
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Executed", systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.green)
+                Text(output)
+                    .font(.system(size: 11, design: .monospaced))
+                    .lineLimit(10)
+                    .padding(8)
+                    .background(Color.green.opacity(0.04))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+        case .error(_, let message, _):
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 11)).foregroundStyle(.red)
+                .padding(8).background(Color.red.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 6))
+        case .haiku(_, let suggestion, _):
+            VStack(alignment: .leading, spacing: 4) {
+                Text(suggestion.title).font(.system(size: 12, weight: .semibold))
+                Text(suggestion.draft).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(8)
+            }
+            .padding(10).background(Color.cyan.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 8))
+        case .learnEvent(_, let event, _):
+            HStack(spacing: 6) {
+                Circle().fill(Color.yellow).frame(width: 5, height: 5)
+                Text(event.description).font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        default:
+            EmptyView()
         }
     }
 }
@@ -844,5 +938,275 @@ struct SessionThreadView: View {
             .padding(.horizontal, 6).padding(.vertical, 2)
             .background(color.opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 4))
             .foregroundStyle(color)
+    }
+}
+
+// MARK: - Workflows View
+
+struct WorkflowsView: View {
+    @ObservedObject var appState: AppState
+    @State private var selectedWorkflow: SavedWorkflow?
+    @State private var editingName: UUID?
+    @State private var editNameText = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Workflows")
+                    .font(.system(size: 16, weight: .bold))
+                Spacer()
+                Text("\(workflows.count) learned")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+
+            Divider()
+
+            if workflows.isEmpty {
+                Spacer()
+                VStack(spacing: 12) {
+                    Image(systemName: "brain.head.profile")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.tertiary)
+                    Text("No workflows learned yet")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Text("Switch to Learn mode, record a workflow, and it will appear here.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 280)
+                }
+                Spacer()
+            } else {
+                HSplitView {
+                    // Workflow list
+                    workflowList
+                        .frame(minWidth: 200, idealWidth: 240)
+
+                    // Detail view
+                    if let wf = selectedWorkflow {
+                        workflowDetail(wf)
+                            .frame(minWidth: 260)
+                    } else {
+                        VStack {
+                            Spacer()
+                            Text("Select a workflow")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.tertiary)
+                            Spacer()
+                        }
+                        .frame(minWidth: 260)
+                    }
+                }
+            }
+        }
+    }
+
+    private var workflows: [SavedWorkflow] {
+        if let project = appState.selectedProject {
+            return appState.workflowStore.workflows(for: project.id)
+        }
+        return appState.workflowStore.workflows.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    // MARK: - Workflow List
+
+    private var workflowList: some View {
+        ScrollView {
+            LazyVStack(spacing: 2) {
+                ForEach(workflows) { wf in
+                    workflowRow(wf)
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    private func workflowRow(_ wf: SavedWorkflow) -> some View {
+        Button {
+            selectedWorkflow = wf
+        } label: {
+            HStack(spacing: 10) {
+                // Icon
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.cyan.opacity(selectedWorkflow?.id == wf.id ? 0.15 : 0.06))
+                        .frame(width: 28, height: 28)
+                    Image(systemName: "brain.head.profile")
+                        .font(.system(size: 12))
+                        .foregroundStyle(selectedWorkflow?.id == wf.id ? .cyan : .secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    // Editable name
+                    if editingName == wf.id {
+                        TextField("Workflow name", text: $editNameText, onCommit: {
+                            appState.workflowStore.rename(id: wf.id, name: editNameText)
+                            editingName = nil
+                            // Refresh selection
+                            if selectedWorkflow?.id == wf.id {
+                                selectedWorkflow = appState.workflowStore.workflows.first { $0.id == wf.id }
+                            }
+                        })
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12, weight: .medium))
+                    } else {
+                        Text(wf.name)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                            .foregroundStyle(.primary)
+                    }
+
+                    HStack(spacing: 4) {
+                        Text("\(wf.steps.count) steps")
+                            .font(.system(size: 9, design: .monospaced))
+                        Text("·").foregroundStyle(.quaternary)
+                        Text(wf.totalEstimatedFormatted)
+                            .font(.system(size: 9))
+                        if wf.runCount > 0 {
+                            Text("·").foregroundStyle(.quaternary)
+                            Text("ran \(wf.runCount)x")
+                                .font(.system(size: 9))
+                        }
+                    }
+                    .foregroundStyle(.tertiary)
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(selectedWorkflow?.id == wf.id ? Color.accentColor.opacity(0.08) : .clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Rename") {
+                editNameText = wf.name
+                editingName = wf.id
+            }
+            Button("Run Now") {
+                appState.executeWorkflow(wf)
+            }
+            Divider()
+            Button("Delete", role: .destructive) {
+                if selectedWorkflow?.id == wf.id { selectedWorkflow = nil }
+                appState.workflowStore.remove(id: wf.id)
+            }
+        }
+    }
+
+    // MARK: - Workflow Detail
+
+    private func workflowDetail(_ wf: SavedWorkflow) -> some View {
+        VStack(spacing: 0) {
+            // Detail header
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(wf.name)
+                        .font(.system(size: 16, weight: .bold))
+                    Spacer()
+                    Button {
+                        appState.executeWorkflow(wf)
+                    } label: {
+                        Label("Run", systemImage: "play.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(.green)
+                }
+
+                HStack(spacing: 12) {
+                    detailChip(icon: "list.number", text: "\(wf.steps.count) steps")
+                    detailChip(icon: "clock", text: wf.totalEstimatedFormatted)
+                    if wf.runCount > 0 {
+                        detailChip(icon: "arrow.counterclockwise", text: "Ran \(wf.runCount)x")
+                    }
+                    if let lastRun = wf.lastRunAt {
+                        detailChip(icon: "calendar", text: lastRun.formatted(.relative(presentation: .named)))
+                    }
+                }
+
+                Text("Created \(wf.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(16)
+
+            Divider()
+
+            // Steps list
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(wf.steps.enumerated()), id: \.element.id) { index, step in
+                        stepRow(step, index: index, isLast: index == wf.steps.count - 1)
+                    }
+                }
+                .padding(16)
+            }
+        }
+    }
+
+    private func stepRow(_ step: WorkflowStep, index: Int, isLast: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            // Step number + connector line
+            VStack(spacing: 0) {
+                ZStack {
+                    Circle()
+                        .fill(Color.cyan.opacity(0.12))
+                        .frame(width: 24, height: 24)
+                    Text("\(step.index)")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.cyan)
+                }
+                if !isLast {
+                    Rectangle()
+                        .fill(Color.cyan.opacity(0.15))
+                        .frame(width: 1.5)
+                        .frame(maxHeight: .infinity)
+                }
+            }
+            .frame(width: 24)
+
+            // Step content
+            VStack(alignment: .leading, spacing: 4) {
+                Text(step.description)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 8) {
+                    Label(step.tool, systemImage: "wrench")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                    if let time = step.estimatedTimeFormatted {
+                        Label(time, systemImage: "clock")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            .padding(.bottom, isLast ? 0 : 12)
+        }
+    }
+
+    private func detailChip(icon: String, text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 9))
+            Text(text).font(.system(size: 10, weight: .medium))
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 5))
     }
 }

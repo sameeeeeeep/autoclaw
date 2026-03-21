@@ -80,6 +80,9 @@ final class FrictionDetector: ObservableObject {
     /// Saved workflows to match against (updated by AppState when workflows change)
     var savedWorkflows: [SavedWorkflow] = []
 
+    /// When true, suppresses all detection (e.g. during learn mode recording)
+    var isSuppressed = false
+
     // MARK: - Activity Buffer
 
     /// Rolling buffer of recent activity for pattern matching
@@ -169,6 +172,8 @@ final class FrictionDetector: ObservableObject {
     // MARK: - Pattern Analysis
 
     private func analyzePatterns() {
+        guard !isSuppressed else { return }
+
         let now = Date()
         let recentWindow: TimeInterval = 60  // look at last 60 seconds
 
