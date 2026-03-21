@@ -4,6 +4,8 @@
 
 Built by [The Last Prompt](https://thelastprompt.ai) — a mission to write the last prompt that makes prompting obsolete.
 
+> This is early-stage, open-source, and actively developed. Contributions welcome.
+
 ---
 
 ## The Problem
@@ -31,16 +33,17 @@ You work normally on your Mac
 │  Active window  ──→ Web app resolution          │
 │  Clipboard      ──→ Content classification      │
 │  File system    ──→ FSEvents monitoring         │
-│  Clicks         ──→ Interaction tracking        │
+│  Clicks         ──→ OCR + interaction tracking  │
+│  Chrome ext     ──→ DOM events (selectors, vals)│
 └───────────────────────┬─────────────────────────┘
                         ▼
 ┌─────────────────────────────────────────────────┐
 │  Intelligence Layer (ARIA)                      │
 │                                                 │
-│  Key frames sent to Sonnet ──→ visual context   │
+│  60s frame grids ──→ Haiku vision analysis      │
 │  Friction detector ──→ spots manual workflows   │
 │  Capability map ──→ what's automatable          │
-│  Capability discovery ──→ what could be         │
+│  Workflow matcher ──→ recognizes learned flows   │
 └───────────────────────┬─────────────────────────┘
                         ▼
 ┌─────────────────────────────────────────────────┐
@@ -55,33 +58,68 @@ You work normally on your Mac
 
 ---
 
-## ARIA Intelligence
+## Three Modes
 
-The core of Autoclaw isn't a chatbot — it's a perception-to-action pipeline that runs continuously while you work.
-
-### Friction Detection
-Watches your live activity stream and recognizes patterns that signal manual work:
-- **Cross-app transfers** — copying data from one app and pasting into another
-- **File shuttles** — downloading from one service, uploading to another
-- **Manual lookups** — switching to a reference app, copying a value, switching back
-- **Repetitive navigation** — the same app-switching loop happening over and over
-
-### Key Frame Analysis
-Instead of noisy OCR, Autoclaw uses **Apple's Neural Engine** (VNGenerateImageFeaturePrintRequest) to embed screen frames as 768-dim vectors and detect when something actually changed semantically. Only meaningful frames get sent to **Sonnet's vision** — with active window crops at 1440px for real detail. It doesn't just see "Chrome." It sees "editing row 3 of Q1 Budget in Google Sheets."
-
-Ported from [video2ai](https://github.com/sameeeeeeep/video2ai)'s key frame extraction — the same cosine distance + adaptive thresholding approach, applied to live screen capture instead of video files.
-
-### Capability Matching
-When friction is detected, Autoclaw checks its **capability map** — an index of every installed MCP tool and what it can do. If an installed tool can solve the friction, it offers immediately. If not, it searches the web for MCP servers that could.
-
-### Web App Resolution
-Knows that "Chrome" isn't Chrome — it's Notion, Figma, Gmail, Jira, whatever the URL says. This is how "user switched from Chrome to Chrome" becomes "user switched from Notion to Google Sheets."
+| Mode | What happens | What runs |
+|------|-------------|-----------|
+| **Ambient** | Passive observation. ARIA watches your screen, detects friction, recognizes learned workflows, offers help. | FrictionDetector + KeyFrameAnalyzer + WorkflowMatcher |
+| **Learn** | You show autoclaw a workflow. It records clicks, screenshots, DOM events, and extracts structured steps with Sonnet vision. | WorkflowRecorder + Chrome Extension + WorkflowExtractor |
+| **AI Search** | Direct interaction. Capture clipboard/screenshots, ask questions, execute tasks. | TaskDeductionService + Claude Code execution |
 
 ---
 
-## When You Do Want to Talk
+## Learn Mode — Teach By Doing
 
-Autoclaw also has direct interaction modes for when you want to ask or command:
+1. Switch to Learn mode, hit record
+2. Do the workflow normally — autoclaw captures everything:
+   - Mouse clicks with OCR context
+   - Screenshots at key moments (Neural Engine change detection)
+   - Chrome extension DOM events (exact selectors, field names, typed values)
+   - Clipboard changes, app switches
+3. Stop recording — Sonnet analyzes screenshots + OCR + DOM events to extract human-readable steps
+4. Review, name, and save the workflow
+5. Next time you start doing it, ARIA recognizes the pattern and offers to run it for you
+
+---
+
+## Chrome Extension
+
+The `ChromeExtension/` directory contains a Manifest V3 extension that captures structured DOM events during Learn mode — much richer than OCR alone:
+
+| OCR gives you | Extension gives you |
+|---|---|
+| `Clicked 'Co' in unknown app` | `Clicked button[aria-label="Compose"] on mail.google.com` |
+| `Clicked near 'To'` | `Typed 'sameep@company.com' in input[name="to"]` |
+| `Clipboard event` | `Selected 'High Priority' in select[name="priority"]` |
+
+**Install:** `chrome://extensions` → Enable developer mode → Load unpacked → Select `ChromeExtension/` folder. It auto-connects to autoclaw via WebSocket on `ws://127.0.0.1:9849`.
+
+---
+
+## ARIA Intelligence
+
+### Friction Detection
+Watches your live activity stream and recognizes patterns:
+- **Cross-app transfers** — copying data from one app and pasting into another
+- **File shuttles** — downloading from one service, uploading to another
+- **Manual lookups** — switching to a reference app, copying a value, switching back
+- **Repetitive navigation** — the same app-switching loop over and over
+- **Recognized workflows** — matches against previously learned workflows
+
+### Key Frame Analysis
+Uses **Apple's Neural Engine** (VNGenerateImageFeaturePrintRequest) to embed screen frames and detect meaningful visual changes. Frames are stitched into grids (max 6 per image) and sent to **Haiku** every 60 seconds for activity understanding and workflow recognition.
+
+### Capability Matching
+When friction is detected, autoclaw checks its **capability map** — an index of every installed MCP tool. If a tool can solve the friction, it offers immediately. If not, it searches for MCP servers that could.
+
+### Web App Resolution
+Knows that "Chrome" isn't Chrome — it's Notion, Figma, Gmail, Jira, whatever the URL says.
+
+---
+
+## Request Modes
+
+When you want to interact directly:
 
 | Mode | What it does |
 |------|-------------|
@@ -89,8 +127,9 @@ Autoclaw also has direct interaction modes for when you want to ask or command:
 | **Question** | Ask — queries meetings, tasks, web. Never touches code |
 | **Analyze** | Deep read — structured assessment without changes |
 | **Add to Tasks** | Create ClickUp tasks from context |
+| **Learn** | Record and extract a workflow |
 
-Cycle modes with **Option+X**. Each mode runs a dedicated Claude Code skill that enforces the right behavior.
+Cycle modes with **Option+X**. Each mode runs a dedicated Claude Code skill.
 
 ---
 
@@ -107,7 +146,7 @@ Autoclaw spawns Claude Code sessions with access to your MCP servers:
 | **Web Search** | Real-time information |
 | **Filesystem** | Project files (Task mode only) |
 
-Add any MCP server to `~/.claude/mcp.json` and Autoclaw can use it — both for direct execution and for capability matching against detected friction.
+Add any MCP server to `~/.claude/mcp.json` and autoclaw can use it — both for direct execution and for capability matching against detected friction.
 
 ---
 
@@ -122,24 +161,22 @@ Add any MCP server to `~/.claude/mcp.json` and Autoclaw can use it — both for 
 
 ---
 
-## Tech
-
-- **Swift** — native macOS, no Electron
-- **SwiftUI** — toast, panel, pill widget
-- **Apple Vision / Neural Engine** — frame embeddings for change detection
-- **Claude Code CLI** — stream-json execution
-- **MCP** — connector ecosystem
-- **Claude Code Skills** — per-mode behavior enforcement
-
 ## Setup
 
 ```bash
-git clone https://github.com/sameeeeeeep/autoclaw.git
+git clone https://github.com/thelastprompt/autoclaw.git
 cd autoclaw
 make run
 ```
 
-**Requires:** macOS 13+, [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), Anthropic API key. Grant Accessibility permission for global hotkeys.
+**Requires:**
+- macOS 13+
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`)
+- Anthropic API key (set in autoclaw settings or `ANTHROPIC_API_KEY` env var)
+- Grant Accessibility + Screen Recording permissions when prompted
+
+**Optional:**
+- Chrome extension (load unpacked from `ChromeExtension/` for richer Learn mode)
 
 ---
 
@@ -153,26 +190,50 @@ Sources/
 ├── ClipboardMonitor.swift     — clipboard polling
 ├── ScreenOCR.swift            — Apple Vision OCR with cursor proximity ranking
 ├── FileActivityMonitor.swift  — FSEvents watcher for cross-app file transfers
-├── WorkflowRecorder.swift     — passive always-on event recording
+├── WorkflowRecorder.swift     — event recording (explicit learn + passive ambient)
 │
 │   ARIA Intelligence
-├── KeyFrameAnalyzer.swift     — Neural Engine embeddings + Sonnet vision analysis
+├── KeyFrameAnalyzer.swift     — Neural Engine embeddings + Haiku vision (60s grid analysis)
 ├── FrictionDetector.swift     — pattern matching on live activity stream
 ├── CapabilityMap.swift        — indexes installed MCP tools into searchable registry
 ├── CapabilityDiscovery.swift  — web search for new integrations
 ├── WebAppResolver.swift       — browser URLs → semantic app identities
+├── WorkflowMatcher.swift      — NLEmbedding similarity for workflow recognition
+├── WorkflowExtractor.swift    — Claude vision extraction from recordings
+│
+│   Browser Integration
+├── BrowserBridge.swift        — WebSocket server for Chrome extension
 │
 │   Execution
 ├── ClaudeCodeRunner.swift     — stream-json CLI integration
 ├── TaskDeductionService.swift — task analysis and intent extraction
 │
 │   Interface
-├── PillView.swift             — menu bar pill with intelligence glow
+├── PillView.swift             — floating pill widget with status + mode bar
 ├── TaskApprovalView.swift     — toast UI with session thread
 ├── MainPanelView.swift        — panel with home, threads, settings
 ├── AppState.swift             — central state and ARIA wiring
 └── ...
+
+ChromeExtension/
+├── manifest.json              — Manifest V3
+├── content.js                 — DOM event capture (clicks, inputs, navigation)
+├── background.js              — WebSocket client + recording state management
+├── popup.html/js              — Connection status popup
+└── icon*.png                  — Extension icons
 ```
+
+---
+
+## Contributing
+
+See [PLAN.md](PLAN.md) for the full roadmap of known gaps and planned work. Pick anything, open a PR.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
 
 ---
 
