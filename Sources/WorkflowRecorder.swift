@@ -46,7 +46,9 @@ final class WorkflowRecorder: ObservableObject {
 
     // MARK: - Start / Stop
 
-    func startRecording(projectId: UUID) {
+    /// Start recording. Pass the resolved app name (e.g. "Gmail" not "Google Chrome")
+    /// so clicks captured before the first app switch event have the correct app context.
+    func startRecording(projectId: UUID, resolvedApp: String? = nil, resolvedWindow: String? = nil) {
         guard !isRecording else { return }
 
         recording = WorkflowRecording(projectId: projectId)
@@ -56,8 +58,11 @@ final class WorkflowRecorder: ObservableObject {
         isRecording = true
         lastClipboard = ""
 
-        // Seed with current active app so clicks before the first app switch aren't "unknown"
-        if let frontApp = NSWorkspace.shared.frontmostApplication {
+        // Seed with resolved app name if provided, otherwise fall back to NSWorkspace
+        if let resolved = resolvedApp, !resolved.isEmpty {
+            lastApp = resolved
+            lastWindow = resolvedWindow ?? ""
+        } else if let frontApp = NSWorkspace.shared.frontmostApplication {
             lastApp = frontApp.localizedName ?? ""
             lastWindow = ""
         } else {

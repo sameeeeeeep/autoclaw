@@ -1006,7 +1006,11 @@ final class AppState: ObservableObject {
             startSession()
         }
 
-        workflowRecorder.startRecording(projectId: project.id)
+        workflowRecorder.startRecording(
+            projectId: project.id,
+            resolvedApp: activeWindowService.effectiveAppName,
+            resolvedWindow: activeWindowTitle
+        )
         isLearnRecording = true
         browserEventBuffer = []
         frictionDetector.isSuppressed = true  // Don't suggest workflows while learning a new one

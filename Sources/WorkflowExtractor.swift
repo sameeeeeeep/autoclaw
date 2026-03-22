@@ -175,21 +175,28 @@ struct WorkflowExtractor {
 
         // Screenshots (if available)
         if !screenshotPaths.isEmpty {
-            sections.append("""
+            var screenshotSection = """
             ## Key Frame Screenshots
 
-            \(screenshotPaths.count) screenshots from the recording are attached. These show exactly what \
-            was on screen at key moments. Use them to:
+            \(screenshotPaths.count) screenshots were captured during this recording. They show exactly what \
+            was on screen at key moments. You MUST read each screenshot file below using the Read tool to see \
+            the actual image content:
+
+            """
+            for (i, path) in screenshotPaths.enumerated() {
+                screenshotSection += "\(i + 1). Read this file to see the screenshot: \(path)\n"
+            }
+            screenshotSection += """
+
+            After reading all screenshots, use them to:
             1. Identify which app/website/page the user was on (look for logos, URLs, page titles)
             2. See exact button labels, form fields, menu items that were interacted with
             3. Read any text/data the user was working with
             4. Understand the visual context that OCR text alone might miss
 
             The screenshots are the ground truth — if OCR text is ambiguous, trust what you see in the images.
-            """)
-            for path in screenshotPaths {
-                sections.append("Image: \(path)")
-            }
+            """
+            sections.append(screenshotSection)
         }
 
         // DOM events context (if Chrome extension provided them)
@@ -489,7 +496,13 @@ struct WorkflowExtractor {
                 index: raw.index,
                 description: raw.description,
                 tool: raw.tool,
-                estimatedSeconds: raw.estimated_seconds
+                estimatedSeconds: raw.estimated_seconds,
+                app: raw.details?.app,
+                action: raw.details?.action,
+                target: raw.details?.target,
+                value: raw.details?.value,
+                url: raw.details?.url,
+                selector: raw.details?.selector
             )
         }
     }

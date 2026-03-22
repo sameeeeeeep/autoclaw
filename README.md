@@ -74,7 +74,7 @@ Runs continuously in the background. You don't interact with it — it watches a
 - **Recognized workflows** — "This looks like your 'Weekly Report' workflow. Want me to run it?"
 
 **When it spots something:**
-A toast appears: *"You're copying data from Notion to Google Sheets. I can sync that directly."* Two buttons: **Do it** or **Dismiss**.
+A clean, Cofia-style toast card appears with app icons, a clear description of what you're doing, and a single **Automate Now** button. No clutter — just the offer and one action.
 
 ### Learn Mode — "Watch me do this once"
 
@@ -99,7 +99,7 @@ When you stop recording, all three signal sources are merged into a timeline and
 5. Click Send                                  [chrome_click]
 ```
 
-Not `"Clicked 'Co' in unknown app"`. Actual steps with actual values.
+Not `"Clicked 'Co' in unknown app"`. Actual steps with actual values, including rich details: app name, action type, target element, entered values, URLs, and CSS selectors from the Chrome extension.
 
 **After saving:**
 The workflow goes into your library. Next time ambient mode sees you starting the same pattern, it offers to run it.
@@ -335,20 +335,22 @@ ChromeExtension/
 This is early alpha. The intelligence pipeline works — perception, analysis, friction detection, workflow extraction. But there are significant gaps in the user-facing product. See [PLAN.md](PLAN.md) for the full roadmap.
 
 **What works today:**
-- Ambient friction detection (cross-app transfers, file shuttles, manual lookups)
+- Ambient friction detection (cross-app transfers, file shuttles, manual lookups, workflow recognition)
 - Learn mode recording with OCR + screenshots + Chrome extension DOM events
-- Workflow extraction via Sonnet vision
+- Workflow extraction via Sonnet vision with rich step details (app, action, target, value, selector)
+- Screenshots passed to extraction model via CLI Read tool for real vision analysis
+- Cofia-style friction toast UI with app icons and single-action "Automate Now" button
 - 60-second grid analysis via Haiku vision
+- Resolved web app names in recordings (Gmail not "Google Chrome")
 - Task deduction from clipboard + voice context
 - Claude Code execution with MCP connectors
 - Global hotkeys, voice transcription, multi-project support
 
 **What's broken or missing:**
-- Workflow browser UI (saved workflows are invisible)
+- Workflow execution engine (step-by-step progress, parameterization)
 - Thread message persistence (conversations lost on restart)
 - Several UI elements are cosmetic only (see PLAN.md)
 - Chrome extension reconnection needs work
-- Extraction quality varies — needs tuning and testing
 
 ---
 

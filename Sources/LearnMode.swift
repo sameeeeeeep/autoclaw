@@ -86,12 +86,28 @@ struct WorkflowStep: Identifiable, Codable {
     let tool: String             // e.g. "notion_read", "clipboard", "chrome", "Claude"
     let estimatedSeconds: Int?
 
-    init(index: Int, description: String, tool: String, estimatedSeconds: Int? = nil) {
+    // Rich details from extraction (app, action, target, value, url, selector)
+    let app: String?             // "Gmail", "Notion", "ClickUp"
+    let action: String?          // "click", "type", "navigate", "copy", "paste"
+    let target: String?          // "Compose button", "To field", "Send button"
+    let value: String?           // "user@email.com", "Weekly Update"
+    let url: String?             // "mail.google.com/mail"
+    let selector: String?        // CSS selector from Chrome extension
+
+    init(index: Int, description: String, tool: String, estimatedSeconds: Int? = nil,
+         app: String? = nil, action: String? = nil, target: String? = nil,
+         value: String? = nil, url: String? = nil, selector: String? = nil) {
         self.id = UUID()
         self.index = index
         self.description = description
         self.tool = tool
         self.estimatedSeconds = estimatedSeconds
+        self.app = app
+        self.action = action
+        self.target = target
+        self.value = value
+        self.url = url
+        self.selector = selector
     }
 
     var estimatedTimeFormatted: String? {

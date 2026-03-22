@@ -804,61 +804,98 @@ struct SessionThreadView: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
 
         case .frictionOffer(_, let signal, _):
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.yellow)
-                    Text("ARIA")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.yellow)
+            VStack(alignment: .leading, spacing: 12) {
+                // App icons row + dismiss
+                HStack(spacing: 0) {
+                    HStack(spacing: -4) {
+                        ForEach(signal.involvedApps.prefix(4), id: \.self) { app in
+                            panelAppIcon(for: app)
+                                .frame(width: 28, height: 28)
+                                .background(Color(.controlBackgroundColor))
+                                .clipShape(Circle())
+                                .overlay(Circle().stroke(Color(.separatorColor), lineWidth: 0.5))
+                        }
+                    }
                     Spacer()
-                    Text(signal.involvedApps.joined(separator: " → "))
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
+                    Button { appState.dismissFriction() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
                 }
 
-                Text(signal.suggestion)
-                    .font(.system(size: 11))
+                // What the user is doing
+                Text(signal.description + "?")
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
 
+                Text("autoclaw can automate this task.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+
+                // Action
                 if signal.isActionable {
-                    HStack(spacing: 8) {
-                        Button("Yes, do it") {
-                            appState.acceptFrictionOffer(signal)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.yellow)
-                        .controlSize(.small)
-
-                        Button("Dismiss") {
-                            appState.dismissFriction()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                    Button {
+                        appState.acceptFrictionOffer(signal)
+                    } label: {
+                        Text("Automate Now")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .background(Color(.darkGray))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
+                    .buttonStyle(.plain)
                 } else {
-                    HStack(spacing: 8) {
-                        Button("Search for integration") {
-                            appState.discoverCapability(for: signal)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.blue)
-                        .controlSize(.small)
-
-                        Button("Not now") {
-                            appState.dismissFriction()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                    Button {
+                        appState.discoverCapability(for: signal)
+                    } label: {
+                        Text("Find Integration")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .background(Color.blue)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(10)
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.yellow.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .background(.background)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(.separatorColor).opacity(0.2), lineWidth: 1))
         }
+    }
+
+    private func panelAppIcon(for app: String) -> some View {
+        let (icon, color) = panelAppIconInfo(app)
+        return Image(systemName: icon)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(color)
+    }
+
+    private func panelAppIconInfo(_ app: String) -> (String, Color) {
+        let lower = app.lowercased()
+        if lower.contains("gmail") || lower.contains("mail") { return ("envelope.fill", .red) }
+        if lower.contains("notion") { return ("doc.text.fill", .primary) }
+        if lower.contains("slack") { return ("number", .purple) }
+        if lower.contains("sheet") || lower.contains("excel") { return ("tablecells.fill", .green) }
+        if lower.contains("chrome") || lower.contains("safari") || lower.contains("arc") { return ("globe", .blue) }
+        if lower.contains("clickup") || lower.contains("jira") || lower.contains("linear") { return ("checkmark.circle.fill", .blue) }
+        if lower.contains("github") { return ("chevron.left.forwardslash.chevron.right", .primary) }
+        if lower.contains("figma") { return ("paintbrush.fill", .purple) }
+        if lower.contains("calendar") { return ("calendar", .red) }
+        if lower.contains("finder") || lower.contains("file") { return ("folder.fill", .blue) }
+        if lower.contains("note") { return ("note.text", .yellow) }
+        if lower.contains("terminal") || lower.contains("iterm") { return ("terminal.fill", .primary) }
+        return ("app.fill", .secondary)
     }
 
     @ViewBuilder

@@ -369,33 +369,100 @@ struct ThreadToastView: View {
     }
 
     private func frictionOfferCard(_ signal: FrictionDetector.FrictionSignal) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
-                Image(systemName: "sparkles").font(.system(size: 9)).foregroundStyle(.yellow)
-                Text("ARIA").font(.system(size: 9, weight: .bold)).foregroundStyle(.yellow)
-                Spacer()
-                Text(signal.involvedApps.joined(separator: " → "))
-                    .font(.system(size: 8)).foregroundStyle(.tertiary)
-            }
-            Text(signal.suggestion)
-                .font(.system(size: 10))
-                .foregroundStyle(.primary)
-            HStack(spacing: 6) {
-                if signal.isActionable {
-                    Button("Do it") { appState.acceptFrictionOffer(signal) }
-                        .buttonStyle(.borderedProminent).tint(.yellow).controlSize(.mini)
-                } else {
-                    Button("Find integration") { appState.discoverCapability(for: signal) }
-                        .buttonStyle(.borderedProminent).tint(.blue).controlSize(.mini)
+        VStack(alignment: .leading, spacing: 12) {
+            // Header: app icons row + dismiss
+            HStack(spacing: 0) {
+                // App icons
+                HStack(spacing: -4) {
+                    ForEach(signal.involvedApps.prefix(4), id: \.self) { app in
+                        appIcon(for: app)
+                            .frame(width: 24, height: 24)
+                            .background(Color(.controlBackgroundColor))
+                            .clipShape(Circle())
+                            .overlay(Circle().stroke(Color(.separatorColor), lineWidth: 0.5))
+                    }
                 }
-                Button("Dismiss") { appState.dismissFriction() }
-                    .buttonStyle(.bordered).controlSize(.mini)
+                Spacer()
+                Button { appState.dismissFriction() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Description — what the user is doing
+            Text(signal.description + "?")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Suggestion — what autoclaw can do
+            Text("autoclaw can automate this task.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+            // Action button
+            if signal.isActionable {
+                Button {
+                    appState.acceptFrictionOffer(signal)
+                } label: {
+                    Text("Automate Now")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color(.darkGray))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+            } else {
+                Button {
+                    appState.discoverCapability(for: signal)
+                } label: {
+                    Text("Find Integration")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.blue)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
             }
         }
-        .padding(8)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.yellow.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .background(.background)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 2)
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(.separatorColor).opacity(0.3), lineWidth: 1))
+    }
+
+    /// Map app name to SF Symbol icon
+    private func appIcon(for app: String) -> some View {
+        let (icon, color) = appIconInfo(app)
+        return Image(systemName: icon)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(color)
+    }
+
+    private func appIconInfo(_ app: String) -> (String, Color) {
+        let lower = app.lowercased()
+        if lower.contains("gmail") || lower.contains("mail") { return ("envelope.fill", .red) }
+        if lower.contains("notion") { return ("doc.text.fill", .primary) }
+        if lower.contains("slack") { return ("number", .purple) }
+        if lower.contains("sheet") || lower.contains("excel") { return ("tablecells.fill", .green) }
+        if lower.contains("chrome") || lower.contains("safari") || lower.contains("arc") { return ("globe", .blue) }
+        if lower.contains("clickup") || lower.contains("jira") || lower.contains("linear") { return ("checkmark.circle.fill", .blue) }
+        if lower.contains("github") { return ("chevron.left.forwardslash.chevron.right", .primary) }
+        if lower.contains("figma") { return ("paintbrush.fill", .purple) }
+        if lower.contains("calendar") { return ("calendar", .red) }
+        if lower.contains("finder") || lower.contains("file") { return ("folder.fill", .blue) }
+        if lower.contains("note") { return ("note.text", .yellow) }
+        if lower.contains("terminal") || lower.contains("iterm") { return ("terminal.fill", .primary) }
+        return ("app.fill", .secondary)
     }
 
     private func clipboardBubble(id: UUID, content: String, app: String, window: String) -> some View {
