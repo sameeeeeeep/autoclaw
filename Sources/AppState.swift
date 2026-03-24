@@ -27,6 +27,17 @@ enum ClaudeModel: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Transcribe Status
+
+enum TranscribeStatus: Equatable {
+    case idle
+    case listening
+    case cleaning
+    case injecting
+    case done
+    case error(String)
+}
+
 @MainActor
 final class AppState: ObservableObject {
     static let shared = AppState()
@@ -41,6 +52,11 @@ final class AppState: ObservableObject {
     let workflowRecorder = WorkflowRecorder()
     let workflowStore = WorkflowStore()
     let voiceService = VoiceService()
+    let ollamaService = OllamaService()
+    lazy var transcribeService = TranscribeService(
+        voiceService: voiceService,
+        ollamaService: ollamaService
+    )
 
     // MARK: - ARIA Intelligence Layer
     let capabilityMap = CapabilityMap()
@@ -122,6 +138,13 @@ final class AppState: ObservableObject {
 
     // MARK: - ARIA Friction Detection
     @Published var activeFriction: FrictionDetector.FrictionSignal?
+    @Published var frictionToastState: FrictionToastState?
+
+    // MARK: - Transcribe Mode
+    @Published var isTranscribing = false
+    @Published var transcribeRawText = ""
+    @Published var transcribeCleanText = ""
+    @Published var transcribeStatus: TranscribeStatus = .idle
 
     // MARK: - Chrome Extension (DOM events from WebSocket)
     var browserEventBuffer: [BrowserDOMEvent] = []
@@ -153,6 +176,7 @@ final class AppState: ObservableObject {
 
         setupBindings()
         setupVoice()
+        setupTranscribe()
         setupARIA()
     }
 
@@ -178,6 +202,35 @@ final class AppState: ObservableObject {
                 self.statusLine = "Voice captured"
                 print("[Autoclaw] Voice transcript → input: \(text.prefix(60))")
             }
+        }
+    }
+
+    private func setupTranscribe() {
+        // Forward transcribe service state to published properties
+        transcribeService.$status
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$transcribeStatus)
+
+        transcribeService.$rawText
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$transcribeRawText)
+
+        transcribeService.$cleanText
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$transcribeCleanText)
+    }
+
+    func toggleTranscribe() {
+        if isTranscribing {
+            transcribeService.stop()
+            isTranscribing = false
+            statusLine = "Transcribe stopped"
+        } else {
+            isTranscribing = true
+            requestMode = .transcribe
+            showThread = true
+            transcribeService.start()
+            statusLine = "Transcribing…"
         }
     }
 
@@ -874,6 +927,7 @@ final class AppState: ObservableObject {
         case .addToTasks:  return "autoclaw-add-to-tasks"
         case .analyze:     return "autoclaw-analyze"
         case .learn:       return "autoclaw-task"  // Learn uses task skill for execution
+        case .transcribe:  return "autoclaw-task"  // Transcribe doesn't use skills
         }
     }
 
@@ -1203,6 +1257,45 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Friction Toast Lifecycle
+
+    func acceptFriction() {
+        guard let signal = activeFriction else { return }
+        // If we have a matched workflow, show its steps for confirmation
+        if let workflow = signal.matchedWorkflow {
+            frictionToastState = .confirmSteps(workflow.steps)
+        } else {
+            // No matched workflow — offer to learn
+            frictionToastState = nil
+            activeFriction = nil
+        }
+    }
+
+    func runFriction() {
+        guard case .confirmSteps(let steps) = frictionToastState else { return }
+        frictionToastState = .running(steps, currentStep: 0)
+        // Actual execution would be triggered here
+    }
+
+    func updateFrictionStep(_ index: Int) {
+        guard case .running(let steps, _) = frictionToastState else { return }
+        frictionToastState = .running(steps, currentStep: index)
+    }
+
+    func completeFriction(result: String, duration: String) {
+        frictionToastState = .success(result: result, duration: duration)
+    }
+
+    func failFriction(error: String, step: Int?) {
+        frictionToastState = .error(message: error, failedStep: step)
+    }
+
+    func dismissFriction() {
+        frictionToastState = nil
+        activeFriction = nil
+        frictionDetector.dismissFriction()
+    }
+
     /// Forward app/clipboard changes to recorder when in learn mode
     func forwardToRecorderIfNeeded(app: String, window: String) {
         guard isLearnRecording else { return }
@@ -1225,11 +1318,7 @@ final class AppState: ObservableObject {
     }
 
     // MARK: - ARIA Friction Actions
-
-    func dismissFriction() {
-        activeFriction = nil
-        frictionDetector.dismissFriction()
-    }
+    // Note: dismissFriction() is defined above in "Friction Toast Lifecycle"
 
     /// User accepted a friction offer — execute the suggested automation
     func acceptFrictionOffer(_ signal: FrictionDetector.FrictionSignal) {

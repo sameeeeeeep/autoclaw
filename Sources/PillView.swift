@@ -4,20 +4,23 @@ import AppKit
 // MARK: - Pill Mode
 
 enum PillMode: String, CaseIterable {
-    case ambient  = "ambient"
-    case learn    = "learn"
+    case ambient    = "ambient"
+    case learn      = "learn"
+    case transcribe = "transcribe"
 
     var icon: String {
         switch self {
-        case .ambient:  return "checklist"
-        case .learn:    return "brain.head.profile"
+        case .ambient:    return "checklist"
+        case .learn:      return "brain.head.profile"
+        case .transcribe: return "waveform"
         }
     }
 
     var color: Color {
         switch self {
-        case .ambient:  return .green
-        case .learn:    return .cyan
+        case .ambient:    return .green
+        case .learn:      return .cyan
+        case .transcribe: return Theme.teal
         }
     }
 }
@@ -310,19 +313,31 @@ struct SidebarView: View {
             ForEach(PillMode.allCases, id: \.self) { mode in
                 Button {
                     pillMode = mode
-                    // Wire PillMode.learn to RequestMode.learn
-                    if mode == .learn {
+                    // Wire PillMode to RequestMode
+                    switch mode {
+                    case .learn:
                         appState.requestMode = .learn
                         appState.showThread = true
+                    case .transcribe:
+                        appState.requestMode = .transcribe
+                        appState.showThread = true
+                    case .ambient:
+                        appState.requestMode = .task
                     }
                 } label: {
+                    let isActive = pillMode == mode
+                    let isRecording = mode == .learn && appState.isLearnRecording
+                    let isTranscribing = mode == .transcribe && appState.isTranscribing
+                    let highlight = isRecording || isTranscribing
+                    let highlightColor = isRecording ? Color.yellow : Theme.teal
+
                     Image(systemName: mode.icon)
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(pillMode == mode ? (mode == .learn && appState.isLearnRecording ? Color.yellow : Ap.textPrimary) : Ap.modeOff)
+                        .foregroundColor(isActive ? (highlight ? highlightColor : Ap.textPrimary) : Ap.modeOff)
                         .frame(maxWidth: .infinity).frame(height: 28)
                         .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(pillMode == mode ? (mode == .learn && appState.isLearnRecording ? Color.yellow.opacity(0.15) : Ap.modeBgAct) : .clear)
-                            .overlay(pillMode == mode ? RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(mode == .learn && appState.isLearnRecording ? Color.yellow.opacity(0.4) : Ap.modeBorderAct, lineWidth: 1) : nil))
+                            .fill(isActive ? (highlight ? highlightColor.opacity(0.15) : Ap.modeBgAct) : .clear)
+                            .overlay(isActive ? RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(highlight ? highlightColor.opacity(0.4) : Ap.modeBorderAct, lineWidth: 1) : nil))
                         .contentShape(Rectangle())
                 }.buttonStyle(.plain)
             }

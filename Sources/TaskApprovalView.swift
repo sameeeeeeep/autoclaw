@@ -8,36 +8,40 @@ enum RequestMode: String, CaseIterable, Identifiable {
     case question = "Question"
     case analyze = "Analyze"
     case learn = "Learn"
+    case transcribe = "Transcribe"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
-        case .task:       return "play.fill"
-        case .addToTasks: return "plus.circle"
-        case .question:   return "questionmark.bubble"
-        case .analyze:    return "sparkle.magnifyingglass"
-        case .learn:      return "eye.fill"
+        case .task:        return "play.fill"
+        case .addToTasks:  return "plus.circle"
+        case .question:    return "questionmark.bubble"
+        case .analyze:     return "sparkle.magnifyingglass"
+        case .learn:       return "eye.fill"
+        case .transcribe:  return "waveform"
         }
     }
 
     var color: Color {
         switch self {
-        case .task:       return .green
-        case .addToTasks: return .orange
-        case .question:   return .purple
-        case .analyze:    return .cyan
-        case .learn:      return .yellow
+        case .task:        return .green
+        case .addToTasks:  return .orange
+        case .question:    return .purple
+        case .analyze:     return .cyan
+        case .learn:       return .yellow
+        case .transcribe:  return Theme.teal
         }
     }
 
     var placeholder: String {
         switch self {
-        case .task:       return "Describe the task…"
-        case .addToTasks: return "What should be added?"
-        case .question:   return "Ask a question…"
-        case .analyze:    return "What should I analyze?"
-        case .learn:      return "Tap record to learn a workflow…"
+        case .task:        return "Describe the task…"
+        case .addToTasks:  return "What should be added?"
+        case .question:    return "Ask a question…"
+        case .analyze:     return "What should I analyze?"
+        case .learn:       return "Tap record to learn a workflow…"
+        case .transcribe:  return "Tap mic to transcribe…"
         }
     }
 }
@@ -364,105 +368,20 @@ struct ThreadToastView: View {
         case .workflowSaved(_, let workflow, _):
             workflowSavedRow(workflow)
         case .frictionOffer(_, let signal, _):
-            frictionOfferCard(signal)
-        }
-    }
-
-    private func frictionOfferCard(_ signal: FrictionDetector.FrictionSignal) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header: app icons row + dismiss
-            HStack(spacing: 0) {
-                // App icons
-                HStack(spacing: -4) {
-                    ForEach(signal.involvedApps.prefix(4), id: \.self) { app in
-                        appIcon(for: app)
-                            .frame(width: 24, height: 24)
-                            .background(Color(.controlBackgroundColor))
-                            .clipShape(Circle())
-                            .overlay(Circle().stroke(Color(.separatorColor), lineWidth: 0.5))
-                    }
-                }
-                Spacer()
-                Button { appState.dismissFriction() } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
+            // Friction offers now render in dedicated FrictionToastView window
+            // Show a minimal inline indicator in the thread
+            HStack(spacing: 6) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.yellow)
+                Text("Friction detected: \(signal.description)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-
-            // Description — what the user is doing
-            Text(signal.description + "?")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-
-            // Suggestion — what autoclaw can do
-            Text("autoclaw can automate this task.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-
-            // Action button
-            if signal.isActionable {
-                Button {
-                    appState.acceptFrictionOffer(signal)
-                } label: {
-                    Text("Automate Now")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(Color(.darkGray))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-                .buttonStyle(.plain)
-            } else {
-                Button {
-                    appState.discoverCapability(for: signal)
-                } label: {
-                    Text("Find Integration")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(Color.blue)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-                .buttonStyle(.plain)
-            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 2)
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(.separatorColor).opacity(0.3), lineWidth: 1))
-    }
-
-    /// Map app name to SF Symbol icon
-    private func appIcon(for app: String) -> some View {
-        let (icon, color) = appIconInfo(app)
-        return Image(systemName: icon)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(color)
-    }
-
-    private func appIconInfo(_ app: String) -> (String, Color) {
-        let lower = app.lowercased()
-        if lower.contains("gmail") || lower.contains("mail") { return ("envelope.fill", .red) }
-        if lower.contains("notion") { return ("doc.text.fill", .primary) }
-        if lower.contains("slack") { return ("number", .purple) }
-        if lower.contains("sheet") || lower.contains("excel") { return ("tablecells.fill", .green) }
-        if lower.contains("chrome") || lower.contains("safari") || lower.contains("arc") { return ("globe", .blue) }
-        if lower.contains("clickup") || lower.contains("jira") || lower.contains("linear") { return ("checkmark.circle.fill", .blue) }
-        if lower.contains("github") { return ("chevron.left.forwardslash.chevron.right", .primary) }
-        if lower.contains("figma") { return ("paintbrush.fill", .purple) }
-        if lower.contains("calendar") { return ("calendar", .red) }
-        if lower.contains("finder") || lower.contains("file") { return ("folder.fill", .blue) }
-        if lower.contains("note") { return ("note.text", .yellow) }
-        if lower.contains("terminal") || lower.contains("iterm") { return ("terminal.fill", .primary) }
-        return ("app.fill", .secondary)
     }
 
     private func clipboardBubble(id: UUID, content: String, app: String, window: String) -> some View {
@@ -1080,6 +999,10 @@ struct ThreadToastView: View {
             } else {
                 appState.startLearnRecording()
             }
+
+        case .transcribe:
+            // Toggle transcribe mode
+            appState.toggleTranscribe()
         }
     }
 

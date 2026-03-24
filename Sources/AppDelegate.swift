@@ -7,8 +7,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var pillWindow: PillWindow!
     private var mainPanelWindow: MainPanelWindow!
-    private var threadWindow: ToastWindow!
+    private var toastWindow: ToastWindow!
     private var projectPickerWindow: ToastWindow!
+    // Legacy friction window kept for backward compat — unified toast handles both now
+    private var frictionToastWindow: ToastWindow!
     private var hotkeyMonitor: GlobalHotkeyMonitor!
     private var cancellables = Set<AnyCancellable>()
 
@@ -117,9 +119,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupToastWindows() {
-        threadWindow = ToastWindow()
-        threadWindow.allowsKeyboard = true  // needs text input
+        toastWindow = ToastWindow()
+        toastWindow.allowsKeyboard = true  // needs text input
         projectPickerWindow = ToastWindow()
+        frictionToastWindow = ToastWindow()  // legacy, kept for friction-only display
     }
 
     private func setupHotkey() {
@@ -149,7 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if s.sessionActive {
                     s.endSession()
                 } else if s.lastEndedThread != nil {
-                    self?.threadWindow.dismiss()
+                    self?.toastWindow.dismiss()
                     s.dismissEndedSession()
                 }
             },
@@ -157,7 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // ⌥+Z: dismiss toast without ending session (execution continues)
                 guard let s = self?.appState else { return }
                 if s.sessionActive {
-                    self?.threadWindow.dismiss()
+                    self?.toastWindow.dismiss()
                     s.dismissThread()
                 }
             },
@@ -215,7 +218,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if show {
                     self.showThreadToast()
                 } else {
-                    self.threadWindow.dismiss()
+                    self.toastWindow.dismiss()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Show/dismiss friction toast via unified toast (analyze mode)
+        appState.$frictionToastState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                guard let self else { return }
+                if state != nil {
+                    self.appState.requestMode = .analyze
+                    self.appState.showThread = true
+                    self.showThreadToast()
+                } else if self.appState.requestMode == .analyze {
+                    self.toastWindow.dismiss()
                 }
             }
             .store(in: &cancellables)
@@ -276,6 +294,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             .store(in: &cancellables)
+
+        // Re-render toast when transcribe status changes
+        appState.$transcribeStatus
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if self.appState.requestMode == .transcribe && self.appState.showThread {
+                    self.showThreadToast()
+                }
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Toast Presentation
@@ -283,18 +312,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showThreadToast() {
         let isEnded = !appState.sessionActive && !appState.threadMessages.isEmpty
 
-        let view = ThreadToastView(
+        let view = UnifiedToastView(
             appState: appState,
-            onApprove: { [weak self] in
-                self?.appState.approveSuggestion()
-                // Toast stays open — re-renders with executing state
-            },
             onDirectExecute: { [weak self] in
-                // Toast stays open — re-renders with executing state
-                _ = self  // keep reference alive
+                _ = self  // keep reference alive; toast re-renders via state
             },
             onDismiss: { [weak self] in
-                self?.threadWindow.dismiss()
+                self?.toastWindow.dismiss()
                 if isEnded {
                     self?.appState.dismissEndedSession()
                 } else {
@@ -302,21 +326,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             },
             onResume: isEnded ? { [weak self] in
-                self?.threadWindow.dismiss()
+                self?.toastWindow.dismiss()
                 self?.appState.resumeEndedSession()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     self?.showThreadToast()
                 }
-            } : nil
+            } : { },
+            // Friction callbacks (for analyze mode)
+            onAutomate: { [weak self] in self?.appState.acceptFriction() },
+            onRun: { [weak self] in self?.appState.runFriction() },
+            onStop: { [weak self] in self?.appState.dismissFriction() },
+            onOpen: { [weak self] in self?.appState.dismissFriction() },
+            onRetry: { [weak self] in self?.appState.runFriction() }
         )
 
-        threadWindow.show(with: view)
+        toastWindow.show(with: view)
 
-        // Enable file drag & drop on the thread toast
-        threadWindow.onFilesDropped = { [weak self] urls in
+        // Enable file drag & drop
+        toastWindow.onFilesDropped = { [weak self] urls in
             self?.appState.addAttachments(urls)
         }
-        threadWindow.enableFileDrop()
+        toastWindow.enableFileDrop()
     }
 
     private func showProjectPickerToast() {
@@ -333,6 +363,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         projectPickerWindow.show(with: view)
+    }
+
+    private func showFrictionToast() {
+        guard let state = appState.frictionToastState else {
+            frictionToastWindow.dismiss()
+            return
+        }
+        var toast = FrictionToastView(state: state)
+        toast.onAutomate = { [weak self] in self?.appState.acceptFriction() }
+        toast.onEditSteps = {}
+        toast.onRun = { [weak self] in self?.appState.runFriction() }
+        toast.onStop = { [weak self] in self?.appState.dismissFriction() }
+        toast.onOpen = { [weak self] in self?.appState.dismissFriction() }
+        toast.onRetry = { [weak self] in self?.appState.runFriction() }
+        toast.onDismiss = { [weak self] in self?.appState.dismissFriction() }
+        frictionToastWindow.show(with: toast)
     }
 
     // MARK: - Actions

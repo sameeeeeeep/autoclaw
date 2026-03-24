@@ -982,61 +982,71 @@ struct SessionThreadView: View {
 
 struct WorkflowsView: View {
     @ObservedObject var appState: AppState
+    @Environment(\.colorScheme) private var colorScheme
     @State private var selectedWorkflow: SavedWorkflow?
     @State private var editingName: UUID?
     @State private var editNameText = ""
 
+    private var theme: Theme { Theme(colorScheme: colorScheme) }
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Workflows")
-                    .font(.system(size: 16, weight: .bold))
-                Spacer()
-                Text("\(workflows.count) learned")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(16)
+        ZStack {
+            theme.page.ignoresSafeArea()
 
-            Divider()
-
-            if workflows.isEmpty {
-                Spacer()
-                VStack(spacing: 12) {
-                    Image(systemName: "brain.head.profile")
-                        .font(.system(size: 32))
-                        .foregroundStyle(.tertiary)
-                    Text("No workflows learned yet")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    Text("Switch to Learn mode, record a workflow, and it will appear here.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.tertiary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 280)
-                }
-                Spacer()
-            } else {
-                HSplitView {
-                    // Workflow list
-                    workflowList
-                        .frame(minWidth: 200, idealWidth: 240)
-
-                    // Detail view
-                    if let wf = selectedWorkflow {
-                        workflowDetail(wf)
-                            .frame(minWidth: 260)
-                    } else {
-                        VStack {
-                            Spacer()
-                            Text("Select a workflow")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.tertiary)
-                            Spacer()
-                        }
-                        .frame(minWidth: 260)
+            VStack(spacing: 0) {
+                // Header
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Your Workflows")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(theme.textPrimary)
+                            .tracking(-0.3)
+                        Text("Learned automations that run on your behalf.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(theme.textSecondary)
                     }
+
+                    Spacer()
+
+                    // Status badge
+                    if appState.sessionActive {
+                        HStack(spacing: 6) {
+                            Circle().fill(Theme.green).frame(width: 6, height: 6)
+                            Text("Collecting Data")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Theme.green)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Theme.green.opacity(colorScheme == .dark ? 0.15 : 0.08))
+                        .clipShape(Capsule())
+                    } else {
+                        HStack(spacing: 6) {
+                            Circle().fill(Theme.amber).frame(width: 6, height: 6)
+                            Text("Observing")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Theme.amber)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Theme.amber.opacity(colorScheme == .dark ? 0.15 : 0.08))
+                        .clipShape(Capsule())
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 20)
+                .padding(.bottom, 16)
+
+                if workflows.isEmpty {
+                    emptyState
+                } else if let wf = selectedWorkflow {
+                    // Detail view
+                    WorkflowDetailView(appState: appState, workflow: wf) {
+                        selectedWorkflow = nil
+                    }
+                } else {
+                    // Card grid
+                    cardGrid
                 }
             }
         }
@@ -1049,201 +1059,236 @@ struct WorkflowsView: View {
         return appState.workflowStore.workflows.sorted { $0.createdAt > $1.createdAt }
     }
 
-    // MARK: - Workflow List
+    // MARK: - Empty State
 
-    private var workflowList: some View {
-        ScrollView {
-            LazyVStack(spacing: 2) {
-                ForEach(workflows) { wf in
-                    workflowRow(wf)
-                }
-            }
-            .padding(8)
-        }
-    }
-
-    private func workflowRow(_ wf: SavedWorkflow) -> some View {
-        Button {
-            selectedWorkflow = wf
-        } label: {
-            HStack(spacing: 10) {
-                // Icon
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color.cyan.opacity(selectedWorkflow?.id == wf.id ? 0.15 : 0.06))
-                        .frame(width: 28, height: 28)
-                    Image(systemName: "brain.head.profile")
-                        .font(.system(size: 12))
-                        .foregroundStyle(selectedWorkflow?.id == wf.id ? .cyan : .secondary)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    // Editable name
-                    if editingName == wf.id {
-                        TextField("Workflow name", text: $editNameText, onCommit: {
-                            appState.workflowStore.rename(id: wf.id, name: editNameText)
-                            editingName = nil
-                            // Refresh selection
-                            if selectedWorkflow?.id == wf.id {
-                                selectedWorkflow = appState.workflowStore.workflows.first { $0.id == wf.id }
-                            }
-                        })
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12, weight: .medium))
-                    } else {
-                        Text(wf.name)
-                            .font(.system(size: 12, weight: .medium))
-                            .lineLimit(1)
-                            .foregroundStyle(.primary)
-                    }
-
-                    HStack(spacing: 4) {
-                        Text("\(wf.steps.count) steps")
-                            .font(.system(size: 9, design: .monospaced))
-                        Text("·").foregroundStyle(.quaternary)
-                        Text(wf.totalEstimatedFormatted)
-                            .font(.system(size: 9))
-                        if wf.runCount > 0 {
-                            Text("·").foregroundStyle(.quaternary)
-                            Text("ran \(wf.runCount)x")
-                                .font(.system(size: 9))
-                        }
-                    }
-                    .foregroundStyle(.tertiary)
-                }
-
-                Spacer()
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(selectedWorkflow?.id == wf.id ? Color.accentColor.opacity(0.08) : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button("Rename") {
-                editNameText = wf.name
-                editingName = wf.id
-            }
-            Button("Run Now") {
-                appState.executeWorkflow(wf)
-            }
-            Divider()
-            Button("Delete", role: .destructive) {
-                if selectedWorkflow?.id == wf.id { selectedWorkflow = nil }
-                appState.workflowStore.remove(id: wf.id)
-            }
-        }
-    }
-
-    // MARK: - Workflow Detail
-
-    private func workflowDetail(_ wf: SavedWorkflow) -> some View {
-        VStack(spacing: 0) {
-            // Detail header
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text(wf.name)
-                        .font(.system(size: 16, weight: .bold))
-                    Spacer()
-                    Button {
-                        appState.executeWorkflow(wf)
-                    } label: {
-                        Label("Run", systemImage: "play.fill")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .tint(.green)
-                }
-
-                HStack(spacing: 12) {
-                    detailChip(icon: "list.number", text: "\(wf.steps.count) steps")
-                    detailChip(icon: "clock", text: wf.totalEstimatedFormatted)
-                    if wf.runCount > 0 {
-                        detailChip(icon: "arrow.counterclockwise", text: "Ran \(wf.runCount)x")
-                    }
-                    if let lastRun = wf.lastRunAt {
-                        detailChip(icon: "calendar", text: lastRun.formatted(.relative(presentation: .named)))
-                    }
-                }
-
-                Text("Created \(wf.createdAt.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(16)
-
-            Divider()
-
-            // Steps list
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(wf.steps.enumerated()), id: \.element.id) { index, step in
-                        stepRow(step, index: index, isLast: index == wf.steps.count - 1)
-                    }
-                }
-                .padding(16)
-            }
-        }
-    }
-
-    private func stepRow(_ step: WorkflowStep, index: Int, isLast: Bool) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Step number + connector line
-            VStack(spacing: 0) {
+    private var emptyState: some View {
+        VStack {
+            Spacer()
+            VStack(spacing: 16) {
+                // Eye icon
                 ZStack {
                     Circle()
-                        .fill(Color.cyan.opacity(0.12))
-                        .frame(width: 24, height: 24)
-                    Text("\(step.index)")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundStyle(.cyan)
+                        .fill(theme.surface)
+                        .frame(width: 64, height: 64)
+                    Image(systemName: "eye")
+                        .font(.system(size: 24))
+                        .foregroundStyle(theme.textMuted)
                 }
-                if !isLast {
-                    Rectangle()
-                        .fill(Color.cyan.opacity(0.15))
-                        .frame(width: 1.5)
-                        .frame(maxHeight: .infinity)
-                }
-            }
-            .frame(width: 24)
 
-            // Step content
-            VStack(alignment: .leading, spacing: 4) {
-                Text(step.description)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text("autoclaw is watching")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(theme.textPrimary)
 
+                Text("Keep working normally. When patterns emerge,\nautoclaw will suggest automations here.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+
+                // Hint pill
                 HStack(spacing: 8) {
-                    Label(step.tool, systemImage: "wrench")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.06))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-
-                    if let time = step.estimatedTimeFormatted {
-                        Label(time, systemImage: "clock")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                    }
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                    Text("Typically takes 2–3 repetitions to detect a pattern")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.textSecondary)
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(theme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
             }
-            .padding(.bottom, isLast ? 0 : 12)
+            Spacer()
         }
     }
 
-    private func detailChip(icon: String, text: String) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon).font(.system(size: 9))
-            Text(text).font(.system(size: 10, weight: .medium))
+    // MARK: - Card Grid
+
+    private var cardGrid: some View {
+        ScrollView {
+            LazyVGrid(columns: [
+                GridItem(.flexible(), spacing: 16),
+                GridItem(.flexible(), spacing: 16)
+            ], spacing: 16) {
+                ForEach(workflows) { wf in
+                    WorkflowCardView(workflow: wf) {
+                        selectedWorkflow = wf
+                    } onLaunch: {
+                        appState.executeWorkflow(wf)
+                    }
+                    .contextMenu {
+                        Button("Rename") {
+                            editNameText = wf.name
+                            editingName = wf.id
+                        }
+                        Button("Run Now") {
+                            appState.executeWorkflow(wf)
+                        }
+                        Divider()
+                        Button("Delete", role: .destructive) {
+                            appState.workflowStore.remove(id: wf.id)
+                        }
+                    }
+                }
+            }
+            .padding(24)
         }
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(Color.secondary.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 5))
+    }
+}
+
+// MARK: - Workflow Card View
+
+struct WorkflowCardView: View {
+    let workflow: SavedWorkflow
+    var onTap: () -> Void
+    var onLaunch: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var theme: Theme { Theme(colorScheme: colorScheme) }
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 14) {
+                // State badge
+                StatusBadge(state: workflow.state)
+
+                // App icons
+                if !workflow.involvedApps.isEmpty {
+                    AppIconRow(apps: workflow.involvedApps, size: 28)
+                }
+
+                // Title
+                Text(workflow.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                // Description / progress
+                if workflow.state == .running, let step = workflow.currentStep {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Step \(step + 1) of \(workflow.steps.count)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.blue)
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(theme.surface)
+                                    .frame(height: 4)
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(Theme.blue)
+                                    .frame(width: geo.size.width * CGFloat(step + 1) / CGFloat(max(workflow.steps.count, 1)), height: 4)
+                            }
+                        }
+                        .frame(height: 4)
+                    }
+                } else if workflow.state == .completed, let result = workflow.lastResult {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.green)
+                        Text(result)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.green)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Theme.green.opacity(colorScheme == .dark ? 0.12 : 0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                } else if workflow.state == .failed, let error = workflow.lastError {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.red)
+                        Text(error)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.red)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Theme.red.opacity(colorScheme == .dark ? 0.12 : 0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                } else {
+                    Text("\(workflow.steps.count) steps · \(workflow.totalEstimatedFormatted)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.textSecondary)
+                }
+
+                // Footer
+                HStack {
+                    if workflow.runCount > 0 {
+                        Text("Ran \(workflow.runCount)x")
+                            .font(.system(size: 10))
+                            .foregroundStyle(theme.textMuted)
+                        if let rel = workflow.lastRunRelative {
+                            Text("· \(rel)")
+                                .font(.system(size: 10))
+                                .foregroundStyle(theme.textMuted)
+                        }
+                    }
+
+                    Spacer()
+
+                    // Action button
+                    actionButton
+                }
+            }
+            .padding(16)
+            .background(theme.card)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(theme.borderColor(for: workflow.state),
+                            lineWidth: workflow.state == .ready || workflow.state == .paused ? 1 : 1.5)
+            )
+            .shadow(color: theme.glowColor(for: workflow.state), radius: 8, y: 2)
+            .opacity(workflow.state == .paused ? 0.6 : 1)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var actionButton: some View {
+        switch workflow.state {
+        case .ready:
+            smallButton(icon: "play.fill", label: "Launch", bg: theme.buttonBg, fg: theme.buttonText) {
+                onLaunch()
+            }
+        case .running:
+            smallButton(icon: "stop.fill", label: "Stop", bg: theme.card, fg: theme.textSecondary, bordered: true) {}
+        case .completed:
+            smallButton(icon: "arrow.counterclockwise", label: "Re-run", bg: theme.buttonBg, fg: theme.buttonText) {
+                onLaunch()
+            }
+        case .failed:
+            smallButton(icon: "arrow.counterclockwise", label: "Retry", bg: Theme.red, fg: .white) {
+                onLaunch()
+            }
+        case .paused:
+            smallButton(icon: "play.fill", label: "Enable", bg: theme.card, fg: theme.textSecondary, bordered: true) {}
+        }
+    }
+
+    private func smallButton(icon: String, label: String, bg: Color, fg: Color, bordered: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 9))
+                Text(label)
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(fg)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background(bg)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                bordered ? RoundedRectangle(cornerRadius: 6).stroke(theme.border, lineWidth: 1) : nil
+            )
+        }
+        .buttonStyle(.plain)
     }
 }

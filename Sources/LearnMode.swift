@@ -119,6 +119,22 @@ struct WorkflowStep: Identifiable, Codable {
     }
 }
 
+// MARK: - Workflow State
+
+enum WorkflowState: String, Codable, CaseIterable {
+    case ready, running, completed, failed, paused
+
+    var label: String {
+        switch self {
+        case .ready:     return "Ready"
+        case .running:   return "Running"
+        case .completed: return "Completed"
+        case .failed:    return "Failed"
+        case .paused:    return "Paused"
+        }
+    }
+}
+
 // MARK: - Saved Workflow
 
 struct SavedWorkflow: Identifiable, Codable {
@@ -131,6 +147,12 @@ struct SavedWorkflow: Identifiable, Codable {
     var lastRunAt: Date?
     var runCount: Int
 
+    // Execution state
+    var state: WorkflowState
+    var lastError: String?
+    var lastResult: String?
+    var currentStep: Int?
+
     init(name: String, projectId: UUID, steps: [WorkflowStep]) {
         self.id = UUID()
         self.name = name
@@ -140,6 +162,10 @@ struct SavedWorkflow: Identifiable, Codable {
         self.createdAt = Date()
         self.lastRunAt = nil
         self.runCount = 0
+        self.state = .ready
+        self.lastError = nil
+        self.lastResult = nil
+        self.currentStep = nil
     }
 
     var totalEstimatedSeconds: Int {
@@ -152,6 +178,46 @@ struct SavedWorkflow: Identifiable, Codable {
         if s < 60 { return "~\(s)s" }
         let m = s / 60
         return "~\(m) min"
+    }
+
+    /// Unique app names involved in this workflow (for icon display)
+    var involvedApps: [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for step in steps {
+            if let app = step.app, !app.isEmpty, !seen.contains(app) {
+                seen.insert(app)
+                result.append(app)
+            }
+        }
+        // Fallback: derive from tool names
+        if result.isEmpty {
+            for step in steps {
+                let tool = step.tool.lowercased()
+                let name: String
+                if tool.contains("chrome") || tool.contains("browser") { name = "Browser" }
+                else if tool.contains("sheet") || tool.contains("csv") { name = "Sheets" }
+                else if tool.contains("mail") || tool.contains("gmail") { name = "Mail" }
+                else if tool.contains("notion") { name = "Notion" }
+                else if tool.contains("slack") { name = "Slack" }
+                else { continue }
+                if !seen.contains(name) {
+                    seen.insert(name)
+                    result.append(name)
+                }
+            }
+        }
+        return result
+    }
+
+    /// Relative time since last run
+    var lastRunRelative: String? {
+        guard let lastRun = lastRunAt else { return nil }
+        let interval = Date().timeIntervalSince(lastRun)
+        if interval < 60 { return "just now" }
+        if interval < 3600 { return "\(Int(interval / 60))m ago" }
+        if interval < 86400 { return "\(Int(interval / 3600))h ago" }
+        return "\(Int(interval / 86400))d ago"
     }
 }
 
