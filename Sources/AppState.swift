@@ -86,7 +86,7 @@ final class AppState: ObservableObject {
     @Published var currentThread: SessionThread?
 
     // MARK: - Request Mode
-    @Published var requestMode: RequestMode = .task
+    @Published var requestMode: RequestMode = .transcribe
 
     func cycleRequestMode() {
         let all = RequestMode.allCases
@@ -169,7 +169,7 @@ final class AppState: ObservableObject {
         // Initialize ARIA intelligence layer
         self.frictionDetector = FrictionDetector(capabilityMap: capabilityMap)
         self.capabilityDiscovery = CapabilityDiscovery(capabilityMap: capabilityMap)
-        self.keyFrameAnalyzer = KeyFrameAnalyzer(captureStream: workflowRecorder.captureStream)
+        self.keyFrameAnalyzer = KeyFrameAnalyzer()  // captureStream set lazily when learn mode starts
 
         // Connect key frame analyzer to friction detector for richer context
         frictionDetector.keyFrameAnalyzer = keyFrameAnalyzer
@@ -229,6 +229,7 @@ final class AppState: ObservableObject {
             isTranscribing = true
             requestMode = .transcribe
             showThread = true
+            transcribeService.activeApp = activeApp
             transcribeService.start()
             statusLine = "Transcribing…"
         }
@@ -453,6 +454,8 @@ final class AppState: ObservableObject {
 
         // Start the screen capture stream for key frame analysis + click detection
         Task {
+            // Wire captureStream to keyFrameAnalyzer now that we're in learn mode
+            keyFrameAnalyzer.captureStream = workflowRecorder.captureStream
             await workflowRecorder.captureStream.start()
 
             // Wire click events → key frame analyzer (when not in learn mode)
@@ -624,6 +627,14 @@ final class AppState: ObservableObject {
 
     private func handleClipboardChange(_ content: String) {
         guard sessionActive, !isDeducing, !isExecuting else { return }
+
+        // In transcribe mode: clipboard triggers enhancement, not normal task flow
+        if requestMode == .transcribe {
+            let app = activeWindowService.effectiveAppName
+            transcribeService.enhanceClipboard(content, app: app)
+            showThread = true
+            return
+        }
 
         // Use resolved app name for clipboard source
         let effectiveApp = activeWindowService.effectiveAppName

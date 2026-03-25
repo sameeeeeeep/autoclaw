@@ -3,12 +3,12 @@ import SwiftUI
 // MARK: - Request Mode
 
 enum RequestMode: String, CaseIterable, Identifiable {
-    case task = "Task"
-    case addToTasks = "Add to Tasks"
-    case question = "Question"
-    case analyze = "Analyze"
-    case learn = "Learn"
     case transcribe = "Transcribe"
+    case analyze = "Analyze"
+    case task = "Task"
+    case addToTasks = "To Do"
+    case question = "Question"
+    case learn = "Learn"
 
     var id: String { rawValue }
 

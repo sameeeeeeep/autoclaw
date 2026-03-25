@@ -316,11 +316,51 @@ struct UnifiedToastView: View {
                 executingIndicator(label: "Typing at cursor…", color: Theme.teal)
 
             case .done:
+                // What was injected
                 resultCard(
                     text: appState.transcribeCleanText.isEmpty ? "Done" : appState.transcribeCleanText,
                     color: Theme.green,
                     icon: "checkmark.circle.fill"
                 )
+
+                // Smart enhancement from Haiku
+                if appState.transcribeService.isEnhancing {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(Theme.purple)
+                        Text("Enhancing for \(appState.activeApp.isEmpty ? "current app" : appState.activeApp)…")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.purple)
+                    }
+                } else if !appState.transcribeService.enhancedText.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Theme.purple)
+                            Text("Enhanced version")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Theme.purple)
+                        }
+
+                        Text(appState.transcribeService.enhancedText)
+                            .font(.system(size: 12))
+                            .foregroundStyle(theme.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(8)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.purple.opacity(colorScheme == .dark ? 0.1 : 0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                    actionButton(title: "Use Enhanced", icon: "sparkles", color: Theme.purple) {
+                        Task {
+                            await appState.transcribeService.injectEnhanced()
+                        }
+                    }
+                }
 
                 actionButton(title: "Transcribe Again", icon: "mic.fill", color: Theme.teal) {
                     appState.toggleTranscribe()

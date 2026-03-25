@@ -93,9 +93,9 @@ final class KeyFrameAnalyzer: ObservableObject {
     /// Saved workflow summaries for recognition (set by AppState)
     var savedWorkflowSummaries: String = ""
 
-    private let captureStream: ScreenCaptureStream
+    var captureStream: ScreenCaptureStream?
 
-    init(captureStream: ScreenCaptureStream) {
+    init(captureStream: ScreenCaptureStream? = nil) {
         self.captureStream = captureStream
     }
 
@@ -182,15 +182,15 @@ final class KeyFrameAnalyzer: ObservableObject {
         var fullScreenPath: String? = nil
         var windowRect: CGRect? = nil
 
-        if let windowCapture = captureStream.captureActiveWindow() {
+        if let windowCapture = captureStream?.captureActiveWindow() {
             primaryImage = windowCapture.image
             windowRect = windowCapture.windowRect
 
             // Also save full screen for broader context (lower quality)
-            if let fullFrame = captureStream.latestFrame() ?? fallbackCapture() {
+            if let fullFrame = captureStream?.latestFrame() ?? fallbackCapture() {
                 fullScreenPath = saveFrame(fullFrame, quality: 0.4, maxWidth: 1024, suffix: "full")
             }
-        } else if let cgImage = captureStream.latestFrame() ?? fallbackCapture() {
+        } else if let cgImage = captureStream?.latestFrame() ?? fallbackCapture() {
             primaryImage = cgImage
         } else {
             return
@@ -246,7 +246,7 @@ final class KeyFrameAnalyzer: ObservableObject {
 
     /// Compare the current frame to the last via Neural Engine embeddings + cosine distance.
     private func hasScreenChanged() -> Bool {
-        guard let pair = captureStream.recentFramePair() else {
+        guard let pair = captureStream?.recentFramePair() else {
             return true // no history = assume changed
         }
 

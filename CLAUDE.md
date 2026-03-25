@@ -86,15 +86,27 @@ Response: `{ type, description, source, matched_template, confidence }`
 - confidence < 0.6 → discard
 - confidence ≥ 0.6 → pass to Haiku for routing → show toast
 
+## Hotkey Flow
+- **Fn** (tap) → context-sensitive universal key:
+  - Toast not visible → open toast (no session)
+  - Toast visible, no session → start session + auto-trigger mode action (mic/recording)
+  - Session running → stop session (and mode-specific action)
+- **Left Shift** (tap) → cycle through modes: Transcribe → Analyze → Task → To Do → Question → Learn
+- **Double-tap Left Option** → full dismiss (clean slate, end session, clear all state)
+- **Option+Z** → dismiss toast without ending session
+- **Option+X** → cycle request mode
+
 ## What's already built
 - Clipboard-triggered task execution (Task mode core)
 - Sensor pipeline (ActiveWindowService, ClipboardMonitor, ScreenOCR, BrowserBridge, KeyFrameAnalyzer)
 - OAuth flow via autoclawd
-- Status bar pill with mode toggle (ambient/learn/transcribe)
+- Status bar pill with mode toggle (transcribe/analyze/learn)
 - UnifiedToastView — Cofia-style clean card for all modes (replaces old ThreadToastView)
 - FrictionToastView — detection/confirm/running/success/error states for analyze mode
 - Learn mode session recording + workflow extraction
-- Transcribe mode plumbing (TranscribeService, OllamaService, CursorInjector)
+- Transcribe mode — SFSpeechRecognizer → instant injection at cursor → Haiku smart enhance
+- CursorInjector — Cmd+V simulation for typing at user's active cursor
+- VoiceService with audio engine pre-warming for instant mic startup
 - OllamaService — HTTP client for local Qwen 2.5 3B via Ollama
 - Pencil designs: workflow dashboard, toast states, card states, detail view, empty state, dark mode variants, two-brain architecture diagram
 
@@ -106,25 +118,29 @@ Response: `{ type, description, source, matched_template, confidence }`
 - Workflow dashboard UI (card grid, designs exist in Pencil)
 - Template registry + lazy OpenClaw/ClawHub discovery
 - Haiku routing layer (fulfilment matching)
-- Whisper/STT integration for transcribe mode (OllamaService + CursorInjector ready)
+- Haiku smart-enhance for transcribe (post-injection context-aware polish)
+- Clipboard-triggered enhance in transcribe mode (copy text → Haiku polishes for active app)
+- Better STT (Parakeet/Whisper.cpp to replace SFSpeechRecognizer)
 
 ## Security: Three-Gate Model (mandatory, no exceptions)
 - Gate 0: "I noticed X" (toast) — before any work
 - Gate 1: "Here's my plan" (confirm steps) — before execution
 - Gate 2: "Execute these exact tools" (run) — with intent lock diff
 
-## Key decisions (2026-03-24)
-- Qwen is just a bouncer, not a classifier — keep its prompt minimal
-- Haiku does all smart routing, matched against user's installed MCP tools
-- Event-driven triggering, not timer-based (don't waste CPU when idle)
-- Pre-loaded templates ship with the app (don't make user train from scratch)
-- OpenClaw skills lazy-load on demand, never bulk load 13K+
-- OCR capped at ~150 chars of UI labels per capture (full screen text kills the buffer)
-- Screenshots sent to Claude ONLY after user approval (not to Qwen/Haiku)
-- autoclaw uses OAuth for Claude/Haiku, not API keys
-- Learn mode bypasses Qwen — Qwen can't learn, only match
-- Transcribe mode uses Qwen for text cleanup (filler removal, grammar, formatting)
-- Four modes: Analyze, Learn, Task, Transcribe — each with distinct pipeline
+## Key decisions
+- Qwen is just a bouncer, not a classifier — keep its prompt minimal (2026-03-24)
+- Haiku does all smart routing, matched against user's installed MCP tools (2026-03-24)
+- Event-driven triggering, not timer-based (don't waste CPU when idle) (2026-03-24)
+- Pre-loaded templates ship with the app (don't make user train from scratch) (2026-03-24)
+- OpenClaw skills lazy-load on demand, never bulk load 13K+ (2026-03-24)
+- OCR capped at ~150 chars of UI labels per capture (full screen text kills the buffer) (2026-03-24)
+- Screenshots sent to Claude ONLY after user approval (not to Qwen/Haiku) (2026-03-24)
+- autoclaw uses OAuth for Claude/Haiku, not API keys (2026-03-24)
+- Learn mode bypasses Qwen — Qwen can't learn, only match (2026-03-24)
+- Transcribe injects raw text immediately, no Ollama cleanup — speed > perfection (2026-03-26)
+- Haiku smart-enhance runs AFTER injection as a bonus suggestion, not a blocker (2026-03-26)
+- Fn is the universal "do" key, Shift cycles modes, double-tap Option dismisses (2026-03-26)
+- Mode order: Transcribe → Analyze → Task → To Do → Question → Learn (2026-03-26)
 
 ## Tech stack
 Swift 5.9 + SwiftUI, NSStatusItem pill, toast cards, NSPanel side panel, SQLite/GRDB, launchd, SKILL.md OpenClaw registry, macOS 15+, Ollama (Qwen 2.5 3B)

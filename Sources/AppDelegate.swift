@@ -127,34 +127,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupHotkey() {
         hotkeyMonitor = GlobalHotkeyMonitor(
-            onToggle: { [weak self] in self?.appState.toggleSession() },
-            onPause:  { [weak self] in
-                // Fn key:
-                // 1. Session active → cycle mode
-                // 2. Session ended (toast visible) → resume it
-                // 3. No session at all → start fresh
+            onToggle: { [weak self] in
+                // Left Shift → cycle mode
                 guard let s = self?.appState else { return }
-                if s.sessionActive {
-                    s.cycleRequestMode()
-                } else if s.lastEndedThread != nil {
-                    s.resumeEndedSession()
-                    self?.showThreadToast()
-                } else {
-                    s.startSession()
+                s.cycleRequestMode()
+                // Pre-warm audio when cycling to transcribe
+                if s.requestMode == .transcribe {
+                    s.voiceService.warmup()
+                }
+                // If toast is visible, re-render with new mode
+                if s.showThread {
                     self?.showThreadToast()
                 }
             },
-            onEnd:    { [weak self] in
-                // Double-tap Left ⌥:
-                // 1. Session active → end it (stops execution)
-                // 2. Session ended (toast visible) → dismiss toast
+            onPause:  { [weak self] in
+                // Fn key — universal context key:
+                // 1. Toast not visible → open toast (no session)
+                // 2. Toast visible, no session → start session (with mode-specific action)
+                // 3. Session running → stop session (and mode-specific action)
+                // 4. Session ended (toast visible) → resume session
                 guard let s = self?.appState else { return }
-                if s.sessionActive {
+
+                if !s.showThread {
+                    // 1. Toast not visible → just show it (no session yet)
+                    s.showThread = true
+                    self?.showThreadToast()
+                } else if !s.sessionActive {
+                    // 2. Toast visible, no session → start session + mode action
+                    // (covers both fresh start and resume — state was cleaned on dismiss)
+                    s.startSession()
+                    self?.showThreadToast()
+                    // Auto-start mode-specific actions
+                    switch s.requestMode {
+                    case .learn:
+                        if !s.isLearnRecording {
+                            s.startLearnRecording()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                self?.showThreadToast()
+                            }
+                        }
+                    case .transcribe:
+                        s.toggleTranscribe()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            self?.showThreadToast()
+                        }
+                    default:
+                        break
+                    }
+                } else if s.sessionActive {
+                    // 3. Session running → stop (including mode-specific actions)
+                    switch s.requestMode {
+                    case .transcribe where s.isTranscribing:
+                        s.transcribeService.stop()
+                    case .learn where s.isLearnRecording:
+                        s.stopLearnRecording()
+                        // Don't end session — let user review extracted steps
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            self?.showThreadToast()
+                        }
+                        return
+                    default:
+                        break
+                    }
                     s.endSession()
-                } else if s.lastEndedThread != nil {
-                    self?.toastWindow.dismiss()
-                    s.dismissEndedSession()
                 }
+            },
+            onEnd:    { [weak self] in
+                // Double-tap Left ⌥ → full dismiss (clean slate)
+                guard let s = self?.appState else { return }
+                // Stop any mode-specific action
+                if s.isTranscribing { s.transcribeService.stop() }
+                if s.isLearnRecording { s.stopLearnRecording() }
+                // End session if active
+                if s.sessionActive { s.endSession() }
+                // Dismiss toast and clear all state
+                self?.toastWindow.dismiss()
+                s.showThread = false
+                s.lastEndedThread = nil
+                s.threadMessages = []
+                // Reset transcribe state for next session
+                s.transcribeStatus = .idle
+                s.transcribeRawText = ""
+                s.transcribeCleanText = ""
             },
             onScreenshot: { [weak self] in
                 // ⌥+Z: dismiss toast without ending session (execution continues)

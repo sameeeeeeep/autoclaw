@@ -24,14 +24,49 @@ enum CursorInjector {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        // 3. Small delay for pasteboard to sync
-        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        // 3. Delay to let pasteboard sync AND target app regain focus
+        // (our toast may have stolen focus momentarily)
+        try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
 
         // 4. Simulate Cmd+V
         simulatePaste()
 
-        // 5. Restore original clipboard after a delay
-        try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+        // 5. Restore original clipboard after paste completes
+        try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+        pasteboard.clearContents()
+        for (typeRaw, data) in savedItems {
+            let type = NSPasteboard.PasteboardType(typeRaw)
+            pasteboard.setData(data, forType: type)
+        }
+    }
+
+    /// Select all text in current field (Cmd+A) then paste replacement text.
+    /// Used for replacing raw transcription with enhanced version.
+    static func selectAllAndReplace(_ text: String) async {
+        let pasteboard = NSPasteboard.general
+
+        // Save clipboard
+        let savedItems = pasteboard.pasteboardItems?.compactMap { item -> (String, Data)? in
+            guard let type = item.types.first,
+                  let data = item.data(forType: type) else { return nil }
+            return (type.rawValue, data)
+        } ?? []
+
+        // Set replacement text
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+
+        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+
+        // Cmd+A (select all in field)
+        simulateSelectAll()
+        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+
+        // Cmd+V (paste, replacing selection)
+        simulatePaste()
+
+        // Restore clipboard
+        try? await Task.sleep(nanoseconds: 500_000_000)
         pasteboard.clearContents()
         for (typeRaw, data) in savedItems {
             let type = NSPasteboard.PasteboardType(typeRaw)
@@ -40,6 +75,16 @@ enum CursorInjector {
     }
 
     // MARK: - Private
+
+    private static func simulateSelectAll() {
+        let aKeyCode: CGKeyCode = 0x00 // 'a' key
+        guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: aKeyCode, keyDown: true) else { return }
+        keyDown.flags = .maskCommand
+        keyDown.post(tap: .cghidEventTap)
+        guard let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: aKeyCode, keyDown: false) else { return }
+        keyUp.flags = .maskCommand
+        keyUp.post(tap: .cghidEventTap)
+    }
 
     private static func simulatePaste() {
         // Create Cmd+V key event

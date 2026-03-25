@@ -52,6 +52,16 @@ final class VoiceService: ObservableObject {
         }
     }
 
+    // MARK: - Pre-warm
+
+    /// Request mic permission early so startListening() doesn't block on the permission dialog.
+    func warmup() {
+        // Just request permission — don't touch audioEngine.prepare() here
+        // as it can crash if audio graph isn't fully set up yet.
+        SFSpeechRecognizer.requestAuthorization { _ in }
+        print("[VoiceService] Permissions pre-requested")
+    }
+
     // MARK: - Start / Stop
 
     func toggleListening() {

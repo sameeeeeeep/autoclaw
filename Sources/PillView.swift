@@ -4,9 +4,9 @@ import AppKit
 // MARK: - Pill Mode
 
 enum PillMode: String, CaseIterable {
+    case transcribe = "transcribe"
     case ambient    = "ambient"
     case learn      = "learn"
-    case transcribe = "transcribe"
 
     var icon: String {
         switch self {
@@ -111,7 +111,7 @@ private enum Ap {
 struct SidebarView: View {
     @ObservedObject var appState: AppState
     @Binding var collapseLevel: CollapseLevel
-    @State private var pillMode: PillMode = .ambient
+    @State private var pillMode: PillMode = .transcribe
 
     // Derived from AppState — no more fake local state
     private var micOn: Bool { appState.isVoiceListening }

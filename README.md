@@ -54,70 +54,52 @@ Built by [The Last Prompt](https://thelastprompt.ai).
 
 ## How It Works
 
-Autoclaw runs as a floating pill widget on your screen. Three modes, each with a specific job:
+Autoclaw runs as a floating pill widget on your screen. Four modes, each with a distinct pipeline. Cycle with **Left Shift**, start/stop with **Fn**, dismiss with **double-tap Left Option**.
 
-### Ambient Mode — "I'll watch, you work"
+### 1. Transcribe — "I'll type what you say"
 
-Runs continuously in the background. You don't interact with it — it watches and offers help when it spots friction.
+Voice-to-text that types wherever your cursor is. Like WhisperFlow.
 
-**What it does every 60 seconds:**
-1. **Neural Engine** (Apple VNFeaturePrint, on-device, zero cost) detects which screen frames had meaningful visual changes
-2. Changed frames are stitched into a **grid image** (max 6 frames per grid, timestamped)
-3. Grid sent to **Haiku** with your saved workflow summaries
-4. Haiku analyzes the sequence: what apps, what actions, what intent, does this match a learned workflow?
+- SFSpeechRecognizer captures your voice (with audio engine pre-warming for instant startup)
+- Raw text injected immediately at cursor via Cmd+V simulation
+- Haiku then suggests a context-aware enhanced version (polished email on Gmail, better prompt on Freepik, etc.)
+- Also works with clipboard: copy text in transcribe mode and Haiku will polish it for the active app
 
-**What it detects:**
-- **Cross-app transfers** — you copied from Notion and pasted into Sheets. There's an API for that.
-- **File shuttles** — you downloaded a CSV from one tool and uploaded it to another. Direct integration exists.
-- **Manual lookups** — you switched to Slack, copied a message, switched back. It can pull that inline.
-- **Repetitive navigation** — you keep cycling Chrome → Sheets → Slack → Chrome. That's a workflow.
-- **Recognized workflows** — "This looks like your 'Weekly Report' workflow. Want me to run it?"
+### 2. Analyze — "I'll watch, you work"
+
+The passive autopilot. Runs in the background, watches what you do, offers help.
+
+**Two-brain detection:**
+1. **Qwen 2.5 3B** (local, Ollama, <2s) — the bouncer. Filters sensor data every 60s. Single prompt, three detection modes: TASK (something to do), WORKFLOW (repetitive pattern), NONE.
+2. **Haiku** (cloud, fast) — the concierge. Only called when Qwen flags something. Routes to the right fulfilment: pre-loaded template, installed MCP tool, ClawHub skill, or custom Claude solution.
+
+**What gets detected:**
+- **Tasks on screen** — Slack message asking you to do something, email request, calendar reminder
+- **Repetitive workflows** — Sheets → Gmail → Sheets → Gmail loop, copy-paste cycles
+- **Automatable patterns** — downloading a CSV from one tool, uploading to another
 
 **When it spots something:**
-A clean, Cofia-style toast card appears with app icons, a clear description of what you're doing, and a single **Automate Now** button. No clutter — just the offer and one action.
+A clean, Cofia-style toast card appears with app icons, a clear description, and a single **Automate Now** button. One tap → Claude executes.
 
-### Learn Mode — "Watch me do this once"
+### 3. Task — "Here's what I need, do it"
 
-You show autoclaw a workflow by doing it normally. It records everything, then extracts structured steps.
+Direct execution. Copy text or speak a task, Claude handles it with your project context. No detection needed — you are the trigger. Works with any installed MCP tools, OpenClaw skills, pre-loaded templates, or freeform tasks.
 
-**Recording captures (from three sources):**
+**Request sub-modes** (cycle with Option+X): Task, To Do, Question.
 
-| Source | What you get | Quality |
-|--------|-------------|---------|
-| **OCR + Screenshots** | Text near cursor, periodic screen captures, active window crops | Works for all apps. Noisy but gives visual context. |
-| **Chrome Extension** | Exact CSS selectors, form field names, typed values, URLs, navigation events | Browser only. Precise enough for replay. |
-| **Neural Engine** | Frame change detection — skips captures when nothing changed | Efficiency gate. Saves API cost. |
+### 4. Learn — "Watch me do this once"
 
-**Extraction:**
-When you stop recording, all three signal sources are merged into a timeline and sent to **Sonnet with vision**. Sonnet sees the screenshots AND the OCR/DOM data and produces human-readable steps like:
+Bypasses Qwen entirely (it's not smart enough to learn). Records your raw session, sends to Claude/Haiku to extract a new reusable workflow definition.
 
-```
-1. Open Gmail and click Compose               [chrome_click]
-2. Enter 'sameep@company.com' in To field      [chrome_form_input]
-3. Set subject to 'Weekly Status Update'       [chrome_form_input]
-4. Write email body with project updates       [chrome_form_input]
-5. Click Send                                  [chrome_click]
-```
+**Recording captures:** ActiveWindow, ClipboardMonitor, ScreenOCR, BrowserBridge (Chrome extension DOM events), KeyFrameAnalyzer gating.
 
-Not `"Clicked 'Co' in unknown app"`. Actual steps with actual values, including rich details: app name, action type, target element, entered values, URLs, and CSS selectors from the Chrome extension.
+**Extraction:** When you stop recording, sensor data is sent to Claude to produce structured steps. Saved workflows become matchable in Analyze mode.
 
-**After saving:**
-The workflow goes into your library. Next time ambient mode sees you starting the same pattern, it offers to run it.
+### Three execution modes (Claude's job after user approval)
 
-### AI Search Mode — "Here's context, figure it out"
-
-Direct interaction. Capture clipboard entries, screenshots, voice — then ask autoclaw to deduce what you need.
-
-**Request modes** (cycle with Option+X):
-
-| Mode | Behavior |
-|------|----------|
-| **Task** | Executes — edits files, runs commands, uses MCP connectors, ships code |
-| **Question** | Answers — queries meetings, searches web, looks up tasks. Never touches code. |
-| **Analyze** | Reads deeply — structured assessment, no modifications |
-| **Add to Tasks** | Creates ClickUp/project management tasks from captured context |
-
-Each mode invokes a dedicated Claude Code skill that enforces the right guardrails.
+1. **See & Do** — execute a detected task
+2. **Learn & Automate** — extract workflow pattern, save as template, run it
+3. **Understand & Solve** — no template exists, reason about the gap, build custom solution (e.g. creating video2ai)
 
 ---
 
@@ -125,48 +107,55 @@ Each mode invokes a dedicated Claude Code skill that enforces the right guardrai
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  PERCEPTION                                                  │
+│  SENSORS (always on, all output TEXT)                         │
 │                                                              │
-│  ScreenCaptureStream ──→ Neural Engine frame embeddings      │
-│  ActiveWindowService ──→ app/window/URL (WebAppResolver)     │
-│  ClipboardMonitor ────→ content + source app                 │
-│  ScreenOCR ───────────→ cursor-proximate text                │
-│  FileActivityMonitor ─→ FSEvents (project dirs only)         │
-│  BrowserBridge (WS) ──→ Chrome extension DOM events          │
+│  ActiveWindowService ──→ app name, window title, URL         │
+│  ClipboardMonitor ────→ copied text + source app             │
+│  ScreenOCR (Vision) ──→ UI labels only (~150 chars)          │
+│  BrowserBridge (WS) ──→ Chrome ext DOM events, selectors     │
+│  KeyFrameAnalyzer ────→ Neural Engine gates WHEN to OCR      │
 │  VoiceService ────────→ on-device speech transcription        │
 └──────────────────┬───────────────────────────────────────────┘
-                   │
+                   │  60s rolling text buffer (500-800 tokens)
                    ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  INTELLIGENCE (ARIA)                                         │
+│  QWEN 2.5 3B (local, Ollama, <2s) — THE BOUNCER             │
 │                                                              │
-│  KeyFrameAnalyzer                                            │
-│    Neural Engine gate → 60s grid stitch → Haiku vision       │
+│  Single prompt, 3 detection modes:                           │
+│    TASK — "there's something to DO"                          │
+│    WORKFLOW — "user is repeating a pattern"                   │
+│    NONE — nothing actionable                                 │
 │                                                              │
-│  FrictionDetector                                            │
-│    Activity buffer → pattern matching → surface offers       │
-│    + workflow recognition from Haiku analysis                 │
-│                                                              │
-│  WorkflowExtractor                                           │
-│    OCR + screenshots + DOM events → Sonnet vision → steps    │
-│                                                              │
-│  CapabilityMap + CapabilityDiscovery                         │
-│    MCP tool registry → friction-to-capability matching       │
+│  Matches against template registry. Event-driven, not timer. │
+│  Min 60s cooldown. Max 20 calls/hour. Debounce 5s.           │
 └──────────────────┬───────────────────────────────────────────┘
-                   │
+                   │  confidence ≥ 0.6
                    ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  EXECUTION                                                   │
+│  HAIKU (cloud, ~1s) — THE CONCIERGE                          │
 │                                                              │
-│  Claude Code CLI (stream-json or -p mode)                    │
-│  ├── MCP connectors (ClickUp, GitHub, Sheets, etc.)          │
-│  ├── Filesystem access (project-scoped)                      │
-│  ├── Web search                                              │
-│  └── Claude Code Skills (per-mode behavior enforcement)      │
+│  Fulfilment routing cascade:                                 │
+│    1. Pre-loaded templates (instant, ~15 shipped)            │
+│    2. Installed MCP tools (~/.claude/mcp.json manifest)      │
+│    3. ClawHub skills (lazy search, install on demand)        │
+│    4. Custom solution (Claude reasons + builds)              │
 │                                                              │
-│  Three-gate approval:                                        │
+│  Returns: toast content, execution plan, app icons           │
+└──────────────────┬───────────────────────────────────────────┘
+                   │  toast → user taps "Automate Now"
+                   ▼
+┌──────────────────────────────────────────────────────────────┐
+│  CLAUDE (cloud) — THE BRAIN                                  │
+│                                                              │
+│  Claude Code CLI executes via MCP servers                    │
+│  ├── Every MCP server in ~/.claude/mcp.json available        │
+│  ├── Pre-loaded templates pre-fill execution plans           │
+│  ├── ClawHub skills install as Claude Code skills            │
+│  └── Screenshots sent with task (after user approval only)   │
+│                                                              │
+│  Three-gate security:                                        │
 │    Gate 0: "I noticed X" → Gate 1: "Here's my plan"          │
-│    → Gate 2: "Approve execution" → Execute                   │
+│    → Gate 2: "Execute these exact tools" → Run               │
 └──────────────────────────────────────────────────────────────┘
 ```
 

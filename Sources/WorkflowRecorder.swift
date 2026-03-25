@@ -36,8 +36,8 @@ final class WorkflowRecorder: ObservableObject {
     private var passiveEvents: [WorkflowEvent] = []
     private static let passiveBufferSize = 200
 
-    // Screen capture stream with rolling frame buffer
-    let captureStream = ScreenCaptureStream()
+    // Screen capture stream with rolling frame buffer — lazy to avoid permission prompt on launch
+    lazy var captureStream = ScreenCaptureStream()
 
     // Track last seen values to detect changes
     private var lastApp = ""
