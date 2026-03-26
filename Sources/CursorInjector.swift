@@ -8,49 +8,37 @@ import AppKit
 /// More reliable than CGEvent character-by-character typing, handles Unicode correctly.
 enum CursorInjector {
 
+    /// Set to true while injecting so ClipboardMonitor ignores changes
+    @MainActor static var isInjecting = false
+
     /// Paste text at the current cursor position.
-    /// Saves clipboard, sets text, simulates Cmd+V, restores clipboard.
+    /// Sets text to clipboard, simulates Cmd+V. Leaves transcribed text on clipboard (useful).
     static func type(_ text: String) async {
+        await MainActor.run { isInjecting = true }
+
         let pasteboard = NSPasteboard.general
 
-        // 1. Save current clipboard
-        let savedItems = pasteboard.pasteboardItems?.compactMap { item -> (String, Data)? in
-            guard let type = item.types.first,
-                  let data = item.data(forType: type) else { return nil }
-            return (type.rawValue, data)
-        } ?? []
-
-        // 2. Set our text to clipboard
+        // Set our text to clipboard
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        // 3. Delay to let pasteboard sync AND target app regain focus
-        // (our toast may have stolen focus momentarily)
+        // Delay to let pasteboard sync AND target app regain focus
         try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
 
-        // 4. Simulate Cmd+V
+        // Simulate Cmd+V
         simulatePaste()
 
-        // 5. Restore original clipboard after paste completes
-        try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
-        pasteboard.clearContents()
-        for (typeRaw, data) in savedItems {
-            let type = NSPasteboard.PasteboardType(typeRaw)
-            pasteboard.setData(data, forType: type)
-        }
+        // Keep isInjecting true long enough for ClipboardMonitor to skip
+        try? await Task.sleep(nanoseconds: 600_000_000) // 600ms
+        await MainActor.run { isInjecting = false }
     }
 
     /// Select all text in current field (Cmd+A) then paste replacement text.
     /// Used for replacing raw transcription with enhanced version.
     static func selectAllAndReplace(_ text: String) async {
-        let pasteboard = NSPasteboard.general
+        await MainActor.run { isInjecting = true }
 
-        // Save clipboard
-        let savedItems = pasteboard.pasteboardItems?.compactMap { item -> (String, Data)? in
-            guard let type = item.types.first,
-                  let data = item.data(forType: type) else { return nil }
-            return (type.rawValue, data)
-        } ?? []
+        let pasteboard = NSPasteboard.general
 
         // Set replacement text
         pasteboard.clearContents()
@@ -65,13 +53,9 @@ enum CursorInjector {
         // Cmd+V (paste, replacing selection)
         simulatePaste()
 
-        // Restore clipboard
-        try? await Task.sleep(nanoseconds: 500_000_000)
-        pasteboard.clearContents()
-        for (typeRaw, data) in savedItems {
-            let type = NSPasteboard.PasteboardType(typeRaw)
-            pasteboard.setData(data, forType: type)
-        }
+        // Keep isInjecting true long enough for ClipboardMonitor to skip
+        try? await Task.sleep(nanoseconds: 600_000_000) // 600ms
+        await MainActor.run { isInjecting = false }
     }
 
     // MARK: - Private

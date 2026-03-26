@@ -32,6 +32,7 @@ enum ClaudeModel: String, CaseIterable, Identifiable {
 enum TranscribeStatus: Equatable {
     case idle
     case listening
+    case transcribing
     case cleaning
     case injecting
     case done
@@ -62,9 +63,11 @@ final class AppState: ObservableObject {
     let capabilityMap = CapabilityMap()
     let fileActivityMonitor = FileActivityMonitor()
     let browserBridge = BrowserBridge()
+    let contextBuffer = ContextBuffer()
     private(set) var frictionDetector: FrictionDetector!
     private(set) var capabilityDiscovery: CapabilityDiscovery!
     private(set) var keyFrameAnalyzer: KeyFrameAnalyzer!
+    private(set) var analyzePipeline: AnalyzePipeline!
 
     // MARK: - Model & Project Preferences
     @Published var selectedModel: ClaudeModel {
@@ -84,6 +87,9 @@ final class AppState: ObservableObject {
     @Published var needsProjectSelection = false
     @Published var currentSessionId: String?
     @Published var currentThread: SessionThread?
+
+    // MARK: - Ollama
+    @Published var ollamaAvailable = false
 
     // MARK: - Request Mode
     @Published var requestMode: RequestMode = .transcribe
@@ -170,6 +176,12 @@ final class AppState: ObservableObject {
         self.frictionDetector = FrictionDetector(capabilityMap: capabilityMap)
         self.capabilityDiscovery = CapabilityDiscovery(capabilityMap: capabilityMap)
         self.keyFrameAnalyzer = KeyFrameAnalyzer()  // captureStream set lazily when learn mode starts
+        self.analyzePipeline = AnalyzePipeline(
+            contextBuffer: contextBuffer,
+            ollamaService: ollamaService,
+            capabilityMap: capabilityMap,
+            workflowStore: workflowStore
+        )
 
         // Connect key frame analyzer to friction detector for richer context
         frictionDetector.keyFrameAnalyzer = keyFrameAnalyzer
@@ -178,6 +190,15 @@ final class AppState: ObservableObject {
         setupVoice()
         setupTranscribe()
         setupARIA()
+        checkOllama()
+    }
+
+    private func checkOllama() {
+        Task {
+            let available = await ollamaService.isAvailable()
+            await MainActor.run { self.ollamaAvailable = available }
+            print("[Autoclaw] Ollama: \(available ? "available" : "not running")")
+        }
     }
 
     private func setupVoice() {
@@ -275,10 +296,16 @@ final class AppState: ObservableObject {
             self.frictionDetector.surfaceExternal(signal)
         }
 
-        // Wire file activity monitor into friction detector + key frame analyzer
+        // Wire file activity monitor into friction detector + key frame analyzer + context buffer
         fileActivityMonitor.onFileEvent = { [weak self] fileEvent in
             self?.frictionDetector.recordFileEvent(fileEvent)
             self?.keyFrameAnalyzer.onFileEvent(app: fileEvent.sourceApp ?? "unknown")
+            self?.contextBuffer.recordFileEvent(
+                fileName: fileEvent.fileName,
+                operation: fileEvent.operation == .created ? "created" : "modified",
+                app: fileEvent.sourceApp ?? "unknown"
+            )
+            if self?.requestMode == .analyze { self?.analyzePipeline.onSensorEvent() }
         }
 
         // Wire friction detection → surface offers to user
@@ -310,12 +337,42 @@ final class AppState: ObservableObject {
             }
         }
 
+        // Wire Analyze pipeline detection → surface as toast
+        analyzePipeline.onDetection = { [weak self] detection in
+            guard let self = self, self.requestMode == .analyze else { return }
+            // Build a FrictionSignal so existing UI can display it
+            let signal = FrictionDetector.FrictionSignal(
+                timestamp: Date(),
+                pattern: detection.type == .workflow ? .recognizedWorkflow : .crossAppTransfer,
+                involvedApps: [],
+                description: detection.description,
+                capability: nil,
+                suggestion: detection.suggestedAction,
+                confidence: detection.confidence,
+                isActionable: detection.fulfilmentPlan != nil
+            )
+            self.activeFriction = signal
+            self.frictionToastState = .detection(signal)
+            self.showThread = true
+            self.statusLine = detection.suggestedAction
+            print("[Autoclaw] Analyze detection: \(detection.description)")
+        }
+
         // Start browser bridge WebSocket server (always on, lightweight)
         browserBridge.start()
 
-        // Wire DOM events from Chrome extension into the event buffer
+        // Wire DOM events from Chrome extension into the event buffer + context buffer
         browserBridge.onDOMEvent = { [weak self] event in
             guard let self = self else { return }
+
+            // Feed context buffer for Analyze pipeline
+            self.contextBuffer.recordBrowserEvent(
+                type: event.type.rawValue,
+                page: event.pageTitle,
+                detail: event.elementText ?? event.value
+            )
+            if self.requestMode == .analyze { self.analyzePipeline.onSensorEvent() }
+
             // Buffer events during learn mode recording
             if self.isLearnRecording {
                 self.browserEventBuffer.append(event)
@@ -394,6 +451,10 @@ final class AppState: ObservableObject {
 
         // Forward to learn recorder if active (uses effective app name)
         forwardToRecorderIfNeeded(app: effectiveApp, window: window)
+
+        // Feed the context buffer (for Analyze pipeline)
+        contextBuffer.recordAppSwitch(app: effectiveApp, window: window, url: url.isEmpty ? nil : url)
+        if requestMode == .analyze { analyzePipeline.onSensorEvent() }
 
         // Feed the friction detector
         frictionDetector.recordAppSwitch(
@@ -533,10 +594,25 @@ final class AppState: ObservableObject {
         executionTask?.cancel()
         executionTask = nil
 
+        // Stop transcribe — force reset everything synchronously
+        if isTranscribing {
+            transcribeService.forceReset()
+            isTranscribing = false
+        }
+        // Also force reset even if isTranscribing was false (stale state)
+        transcribeService.forceReset()
+        transcribeStatus = .idle
+        transcribeRawText = ""
+        transcribeCleanText = ""
+
+        // Force-stop WhisperKit recording synchronously so it's clean for next session
+        voiceService.whisperKitService.forceReset()
+
         // Stop voice if listening
         if voiceService.isListening {
             voiceService.stopListening()
         }
+        voiceService.isListening = false
 
         // Stop learn recording if active
         if isLearnRecording {
@@ -646,6 +722,10 @@ final class AppState: ObservableObject {
 
         // Forward to learn recorder if active
         forwardClipboardToRecorderIfNeeded(content: content, app: effectiveApp, window: activeWindowTitle)
+
+        // Feed the context buffer (for Analyze pipeline)
+        contextBuffer.recordClipboard(content: content, sourceApp: effectiveApp)
+        if requestMode == .analyze { analyzePipeline.onSensorEvent() }
 
         // Feed the friction detector
         frictionDetector.recordClipboard(
@@ -933,9 +1013,7 @@ final class AppState: ObservableObject {
     /// Maps each request mode to a Claude Code skill name (in ~/.claude/skills/)
     private func skillName(for mode: RequestMode) -> String {
         switch mode {
-        case .question:    return "autoclaw-question"
         case .task:        return "autoclaw-task"
-        case .addToTasks:  return "autoclaw-add-to-tasks"
         case .analyze:     return "autoclaw-analyze"
         case .learn:       return "autoclaw-task"  // Learn uses task skill for execution
         case .transcribe:  return "autoclaw-task"  // Transcribe doesn't use skills

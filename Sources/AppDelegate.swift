@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        DebugLog.clear()
+        DebugLog.log("[App] Launch started")
         setupMenuBar()
         setupPillWindow()
         setupMainPanel()
@@ -29,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupHotkey()
         startServices()
         observeState()
+        DebugLog.log("[App] Launch complete")
     }
 
     // MARK: - Setup
@@ -141,20 +144,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             },
             onPause:  { [weak self] in
-                // Fn key — universal context key:
-                // 1. Toast not visible → open toast (no session)
-                // 2. Toast visible, no session → start session (with mode-specific action)
+                // Fn key — three states:
+                // 1. Toast not visible → open toast in transcribe mode (no session yet)
+                // 2. Toast visible, no session → start session + mode action (mic on)
                 // 3. Session running → stop session (and mode-specific action)
-                // 4. Session ended (toast visible) → resume session
                 guard let s = self?.appState else { return }
 
+                DebugLog.log("[Fn] pressed — showThread: \(s.showThread), sessionActive: \(s.sessionActive), isTranscribing: \(s.isTranscribing), mode: \(s.requestMode), transcribeStatus: \(s.transcribeStatus.label)")
+
                 if !s.showThread {
-                    // 1. Toast not visible → just show it (no session yet)
+                    // State 1: Toast closed → just open it in transcribe mode
+                    s.requestMode = .transcribe
                     s.showThread = true
                     self?.showThreadToast()
                 } else if !s.sessionActive {
-                    // 2. Toast visible, no session → start session + mode action
-                    // (covers both fresh start and resume — state was cleaned on dismiss)
+                    // State 2: Toast visible, no session → start session + mode action
                     s.startSession()
                     self?.showThreadToast()
                     // Auto-start mode-specific actions
@@ -167,18 +171,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             }
                         }
                     case .transcribe:
-                        s.toggleTranscribe()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            self?.showThreadToast()
+                        if !s.isTranscribing {
+                            s.toggleTranscribe()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                self?.showThreadToast()
+                            }
                         }
                     default:
                         break
                     }
-                } else if s.sessionActive {
-                    // 3. Session running → stop (including mode-specific actions)
+                } else {
+                    // State 3: Session running → stop (including mode-specific actions)
                     switch s.requestMode {
                     case .transcribe where s.isTranscribing:
+                        // Let transcribeService.stop() finish its async work
+                        // It will transcribe remaining audio, clean, inject, enhance
+                        // Do NOT call endSession() here — it would kill the async work
+                        s.isTranscribing = false
                         s.transcribeService.stop()
+                        DebugLog.log("[Fn] Transcribe stopping — letting async work finish")
+                        return  // don't endSession yet, stop() handles everything
                     case .learn where s.isLearnRecording:
                         s.stopLearnRecording()
                         // Don't end session — let user review extracted steps
@@ -196,10 +208,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Double-tap Left ⌥ → full dismiss (clean slate)
                 guard let s = self?.appState else { return }
                 // Stop any mode-specific action
-                if s.isTranscribing { s.transcribeService.stop() }
                 if s.isLearnRecording { s.stopLearnRecording() }
-                // End session if active
+                // End session if active (this handles transcribe cleanup via forceReset)
                 if s.sessionActive { s.endSession() }
+                // Force reset transcribe even if session wasn't active
+                s.transcribeService.forceReset()
+                s.voiceService.whisperKitService.forceReset()
+                s.voiceService.isListening = false
+                s.isTranscribing = false
                 // Dismiss toast and clear all state
                 self?.toastWindow.dismiss()
                 s.showThread = false
@@ -209,6 +225,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 s.transcribeStatus = .idle
                 s.transcribeRawText = ""
                 s.transcribeCleanText = ""
+                // Reset to transcribe mode so next Fn opens fresh
+                s.requestMode = .transcribe
             },
             onScreenshot: { [weak self] in
                 // ⌥+Z: dismiss toast without ending session (execution continues)
@@ -227,6 +245,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startServices() {
         appState.clipboardMonitor.start()
         appState.activeWindowService.start()
+
+        // Pre-load WhisperKit model on launch (downloads once ~142MB, then instant)
+        appState.voiceService.warmup()
     }
 
     // MARK: - State Observation

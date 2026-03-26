@@ -39,7 +39,7 @@ struct UnifiedToastView: View {
     @ViewBuilder
     private var cardContent: some View {
         switch appState.requestMode {
-        case .task, .addToTasks, .question:
+        case .task:
             taskCardView
         case .analyze:
             analyzeCardView
@@ -275,45 +275,31 @@ struct UnifiedToastView: View {
                 }
 
             case .listening:
-                // Waveform + live text
+                // Waveform — no live transcript, just recording indicator
                 HStack(spacing: 8) {
                     waveformBars
-                    Text("Listening…")
+                    Text("Listening...")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.teal)
                 }
 
-                if !appState.transcribeRawText.isEmpty {
-                    Text(appState.transcribeRawText)
-                        .font(.system(size: 12))
-                        .foregroundStyle(theme.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(theme.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
+                Text("Speak naturally. Text will appear when you stop.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.textMuted)
+                    .multilineTextAlignment(.center)
 
-                actionButton(title: "Stop & Clean Up", icon: "stop.fill", color: Theme.teal) {
+                actionButton(title: "Done Speaking", icon: "stop.fill", color: Theme.teal) {
                     appState.transcribeService.stop()
                 }
 
-            case .cleaning:
-                executingIndicator(label: "Cleaning up text…", color: Theme.teal)
+            case .transcribing:
+                executingIndicator(label: "Transcribing...", color: Theme.teal)
 
-                if !appState.transcribeRawText.isEmpty {
-                    Text(appState.transcribeRawText)
-                        .font(.system(size: 11))
-                        .foregroundStyle(theme.textMuted)
-                        .lineLimit(3)
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(theme.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
+            case .cleaning:
+                executingIndicator(label: "Cleaning up text...", color: Theme.teal)
 
             case .injecting:
-                executingIndicator(label: "Typing at cursor…", color: Theme.teal)
+                executingIndicator(label: "Typing at cursor...", color: Theme.teal)
 
             case .done:
                 // What was injected

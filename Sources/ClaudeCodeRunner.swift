@@ -133,11 +133,19 @@ final class ClaudeCodeRunner: @unchecked Sendable {
                 process.arguments = args
                 process.currentDirectoryURL = URL(fileURLWithPath: project.path)
 
-                // Environment — pass API key, strip nested-session guards
+                // Keep CLAUDE_CODE_OAUTH_TOKEN for auth, strip session-specific vars
                 var env = ProcessInfo.processInfo.environment
-                env.removeValue(forKey: "CLAUDECODE")
+                let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+                env["HOME"] = homePath
+                env["PATH"] = "\(homePath)/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+                env.removeValue(forKey: "CLAUDE_CODE_SESSION_ID")
+                env.removeValue(forKey: "CLAUDE_CODE_THREAD_ID")
+                env.removeValue(forKey: "CLAUDE_CODE_ENTRY_POINT")
                 env.removeValue(forKey: "CLAUDE_CODE_ENTRYPOINT")
-                env.removeValue(forKey: "CLAUDE_CODE_OAUTH_TOKEN")
+                env.removeValue(forKey: "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST")
+                env.removeValue(forKey: "CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES")
+                env.removeValue(forKey: "CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL")
+                env.removeValue(forKey: "CLAUDECODE")
                 env.removeValue(forKey: "ANTHROPIC_API_KEY")
 
                 let storedKey = AppSettings.shared.anthropicAPIKey

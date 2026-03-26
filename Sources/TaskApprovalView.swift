@@ -6,8 +6,6 @@ enum RequestMode: String, CaseIterable, Identifiable {
     case transcribe = "Transcribe"
     case analyze = "Analyze"
     case task = "Task"
-    case addToTasks = "To Do"
-    case question = "Question"
     case learn = "Learn"
 
     var id: String { rawValue }
@@ -15,8 +13,6 @@ enum RequestMode: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .task:        return "play.fill"
-        case .addToTasks:  return "plus.circle"
-        case .question:    return "questionmark.bubble"
         case .analyze:     return "sparkle.magnifyingglass"
         case .learn:       return "eye.fill"
         case .transcribe:  return "waveform"
@@ -26,8 +22,6 @@ enum RequestMode: String, CaseIterable, Identifiable {
     var color: Color {
         switch self {
         case .task:        return .green
-        case .addToTasks:  return .orange
-        case .question:    return .purple
         case .analyze:     return .cyan
         case .learn:       return .yellow
         case .transcribe:  return Theme.teal
@@ -37,8 +31,6 @@ enum RequestMode: String, CaseIterable, Identifiable {
     var placeholder: String {
         switch self {
         case .task:        return "Describe the task…"
-        case .addToTasks:  return "What should be added?"
-        case .question:    return "Ask a question…"
         case .analyze:     return "What should I analyze?"
         case .learn:       return "Tap record to learn a workflow…"
         case .transcribe:  return "Tap mic to transcribe…"
@@ -972,20 +964,6 @@ struct ThreadToastView: View {
             onDirectExecute()
             if text.isEmpty { appState.directExecute() }
             else { appState.directExecuteMessage(text) }
-
-        case .addToTasks:
-            // Wrap as a "create ClickUp task" instruction
-            let taskText = text.isEmpty ? "Create a task from the clipboard context" : text
-            let prompt = "Create a ClickUp task for this: \(taskText)"
-            onDirectExecute()
-            appState.directExecuteMessage(prompt)
-
-        case .question:
-            // Ask a question about the project — direct execute with question framing
-            let questionText = text.isEmpty ? "Answer the question based on the context" : text
-            let prompt = "Answer this question about the project: \(questionText)"
-            onDirectExecute()
-            appState.directExecuteMessage(prompt)
 
         case .analyze:
             // Deduce first via Haiku

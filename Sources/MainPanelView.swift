@@ -82,6 +82,51 @@ struct MainPanelView: View {
 
             Spacer()
 
+            // Mode selector
+            VStack(spacing: 4) {
+                Divider().padding(.horizontal, 12)
+
+                Text("MODE")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 6)
+
+                ForEach(RequestMode.allCases) { mode in
+                    Button {
+                        appState.requestMode = mode
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: mode.icon)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(appState.requestMode == mode ? mode.color : .secondary)
+                                .frame(width: 16)
+                            Text(mode.rawValue)
+                                .font(.system(size: 11, weight: appState.requestMode == mode ? .semibold : .regular))
+                                .foregroundStyle(appState.requestMode == mode ? .primary : .secondary)
+                            Spacer()
+                            if appState.requestMode == mode {
+                                Circle()
+                                    .fill(mode.color)
+                                    .frame(width: 5, height: 5)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(
+                            appState.requestMode == mode
+                                ? mode.color.opacity(0.1)
+                                : Color.clear
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.bottom, 4)
+
             // Session status at bottom
             if appState.sessionActive {
                 VStack(spacing: 4) {

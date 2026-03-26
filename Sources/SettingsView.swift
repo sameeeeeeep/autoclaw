@@ -76,6 +76,150 @@ struct SettingsView: View {
                     .padding(8)
                 }
 
+                // Transcribe
+                GroupBox("Transcribe") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        // Microphone Selection
+                        Text("Microphone")
+                            .font(.system(size: 12, weight: .medium))
+
+                        HStack(spacing: 8) {
+                            Picker("Mic", selection: Binding(
+                                get: { AppSettings.shared.selectedMicrophoneUID ?? "__default__" },
+                                set: {
+                                    AppSettings.shared.selectedMicrophoneUID = ($0 == "__default__") ? nil : $0
+                                }
+                            )) {
+                                Text("System Default").tag("__default__")
+                                ForEach(appState.voiceService.availableMicrophones) { mic in
+                                    Text(mic.name + (mic.isDefault ? " (default)" : "")).tag(mic.uid)
+                                }
+                            }
+                            .labelsHidden()
+
+                            Button {
+                                appState.voiceService.refreshMicrophones()
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 11))
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Refresh microphone list")
+                        }
+
+                        Text("Select which microphone to use for voice recording. Refresh if you plug in a new device.")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+
+                        Divider()
+
+                        // STT Engine
+                        Text("Speech-to-Text Engine")
+                            .font(.system(size: 12, weight: .medium))
+
+                        Picker("STT", selection: Binding(
+                            get: { AppSettings.shared.sttProvider },
+                            set: { AppSettings.shared.sttProvider = $0 }
+                        )) {
+                            ForEach(STTProvider.allCases) { provider in
+                                Text(provider.rawValue).tag(provider)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        // WhisperKit model status
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(appState.voiceService.whisperKitService.isModelLoaded ? Color.green : Color.orange.opacity(0.7))
+                                .frame(width: 7, height: 7)
+                            Text("WhisperKit (base.en)")
+                                .font(.system(size: 12, weight: .medium))
+                            Spacer()
+                            if appState.voiceService.whisperKitService.isLoadingModel {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Loading...")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.orange)
+                            } else if appState.voiceService.whisperKitService.isModelLoaded {
+                                Text("Ready")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.green)
+                            } else {
+                                Text("Not loaded")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        Text("WhisperKit runs fully local on Neural Engine. Much better accuracy than Apple Speech. Model downloads once (~142MB).")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+
+                        Divider()
+
+                        // Cleanup Provider
+                        Text("Cleanup Provider")
+                            .font(.system(size: 12, weight: .medium))
+
+                        Picker("Cleanup", selection: Binding(
+                            get: { AppSettings.shared.cleanupProvider },
+                            set: { AppSettings.shared.cleanupProvider = $0 }
+                        )) {
+                            ForEach(CleanupProvider.allCases) { provider in
+                                Text(provider.rawValue).tag(provider)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        Text("Pre-injection: strips filler words, fixes grammar. Qwen: fast & local via Ollama. Haiku: smarter, needs cloud. None: injects raw voice text.")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+
+                        Divider()
+
+                        // Enhance Provider
+                        Text("Smart Enhance")
+                            .font(.system(size: 12, weight: .medium))
+
+                        Picker("Enhance", selection: Binding(
+                            get: { AppSettings.shared.enhanceProvider },
+                            set: { AppSettings.shared.enhanceProvider = $0 }
+                        )) {
+                            ForEach(EnhanceProvider.allCases) { provider in
+                                Text(provider.rawValue).tag(provider)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        Text("Post-injection: context-aware rewrite based on active app (Gmail=professional, Slack=casual, code=syntax). Runs in background, non-blocking.")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+
+                        Divider()
+
+                        // Ollama status
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(appState.ollamaAvailable ? Color.green : Color.red.opacity(0.5))
+                                .frame(width: 7, height: 7)
+                            Text("Ollama (Qwen 2.5 3B)")
+                                .font(.system(size: 12, weight: .medium))
+                            Spacer()
+                            if appState.ollamaAvailable {
+                                Text("Running")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.green)
+                            } else {
+                                Text("Not running")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .padding(8)
+                }
+
                 // ARIA Intelligence
                 GroupBox("ARIA Intelligence") {
                     VStack(alignment: .leading, spacing: 10) {
