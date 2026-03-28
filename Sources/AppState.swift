@@ -100,6 +100,15 @@ final class AppState: ObservableObject {
         let next = all[(all.distance(from: all.startIndex, to: idx) + 1) % all.count]
         requestMode = next
         print("[Autoclaw] Request mode → \(next.rawValue)")
+
+        // When switching TO transcribe mode, fire pre-prompt immediately
+        if next == .transcribe && sessionActive {
+            autoDetectProjectIfNeeded()
+            transcribeService.activeApp = activeApp
+            transcribeService.projectContext = selectedProject?.claudeMDSummary ?? ""
+            transcribeService.sessionContext = buildSessionContext()
+            transcribeService.generatePrePrompt()
+        }
     }
 
     // MARK: - Thread (the chat thread in the toast)
@@ -251,9 +260,411 @@ final class AppState: ObservableObject {
             requestMode = .transcribe
             showThread = true
             transcribeService.activeApp = activeApp
+            // Auto-detect project from active window if none selected
+            autoDetectProjectIfNeeded()
+            transcribeService.projectContext = selectedProject?.claudeMDSummary ?? ""
+            transcribeService.sessionContext = buildSessionContext()
             transcribeService.start()
+            // Fire pre-prompt in background — shows suggestion while user is speaking
+            transcribeService.generatePrePrompt()
             statusLine = "Transcribing…"
         }
+    }
+
+    /// Auto-detect project from active window title if no project is selected.
+    /// Works with ANY app — editors, terminals, Claude Code, browsers — by extracting
+    /// path-like strings or project names from the window title.
+    /// Also refreshes claudeMDSummary from disk (it may have changed since project was added).
+    private func autoDetectProjectIfNeeded() {
+        // If already selected and has context, just refresh the summary + sessions
+        if let project = selectedProject {
+            refreshClaudeMDSummary(for: project)
+            refreshClaudeSessions()
+            if selectedClaudeSession == nil { selectedClaudeSession = claudeSessions.first }
+            DebugLog.log("[AutoDetect] Already have project: \(project.name), session: \(selectedClaudeSession?.title.prefix(30) ?? "none")")
+            return
+        }
+
+        let title = activeWindowService.windowTitle
+        DebugLog.log("[AutoDetect] Window title: '\(title)', known projects: \(projectStore.projects.map(\.name))")
+        guard !title.isEmpty else {
+            DebugLog.log("[AutoDetect] Empty window title, skipping")
+            return
+        }
+
+        // 1. Match window title against known projects by name or path
+        if let match = projectStore.projects.first(where: { project in
+            title.localizedCaseInsensitiveContains(project.name) ||
+            title.contains(project.path)
+        }) {
+            selectedProject = match
+            refreshClaudeMDSummary(for: match)
+            refreshClaudeSessions()
+            selectedClaudeSession = claudeSessions.first
+            DebugLog.log("[AutoDetect] Matched project: \(match.name), session: \(selectedClaudeSession?.title.prefix(30) ?? "none")")
+            return
+        }
+
+        // 2. Try to extract a path directly from window title
+        //    Terminal/iTerm: "user@host: ~/Documents/Project" or "/Users/user/Project"
+        //    Claude Code: "Project — ~/Documents/Project" or just the path
+        //    Editors: "file.swift — ProjectName" or "ProjectName [~/path]"
+        let candidates = extractPathCandidates(from: title)
+        for candidate in candidates {
+            let expanded = (candidate as NSString).expandingTildeInPath
+            let claudePath = expanded + "/CLAUDE.md"
+            if FileManager.default.fileExists(atPath: claudePath) {
+                let project = projectStore.addFromPath(expanded)
+                selectedProject = project
+                DebugLog.log("[Transcribe] Auto-discovered project: \(project.name) at \(expanded)")
+                return
+            }
+        }
+
+        // 3. Last resort: extract name-like tokens and check common locations
+        let hints = extractProjectHints(from: title)
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let basePaths = [
+            "\(home)/Documents", "\(home)/Documents/Claude Code",
+            "\(home)/Projects", "\(home)/Developer",
+            "\(home)/Code", "\(home)/Desktop",
+        ]
+
+        for hint in hints {
+            for base in basePaths {
+                let searchPath = "\(base)/\(hint)"
+                let claudePath = searchPath + "/CLAUDE.md"
+                if FileManager.default.fileExists(atPath: claudePath) {
+                    let project = projectStore.addFromPath(searchPath)
+                    selectedProject = project
+                    DebugLog.log("[Transcribe] Auto-discovered project: \(project.name) at \(searchPath)")
+                    return
+                }
+            }
+        }
+    }
+
+    /// Extract path-like strings from a window title.
+    /// Handles: "/Users/foo/bar", "~/Documents/Project", "user@host: ~/Project"
+    private func extractPathCandidates(from title: String) -> [String] {
+        var candidates: [String] = []
+
+        // Absolute paths: /Users/... or /home/...
+        if let range = title.range(of: #"/(?:Users|home)/\S+"#, options: .regularExpression) {
+            var path = String(title[range])
+            // Strip trailing punctuation
+            while path.last == ")" || path.last == "]" || path.last == ":" { path.removeLast() }
+            candidates.append(path)
+        }
+
+        // Tilde paths: ~/Documents/...
+        if let range = title.range(of: #"~/\S+"#, options: .regularExpression) {
+            var path = String(title[range])
+            while path.last == ")" || path.last == "]" || path.last == ":" { path.removeLast() }
+            candidates.append(path)
+        }
+
+        return candidates
+    }
+
+    /// Extract plausible project name hints from a window title.
+    /// Splits on common delimiters (" — ", " - ", ": ", " | ") and returns non-trivial tokens.
+    private func extractProjectHints(from title: String) -> [String] {
+        let delimiters = [" — ", " - ", ": ", " | "]
+        var parts = [title]
+        for d in delimiters {
+            parts = parts.flatMap { $0.components(separatedBy: d) }
+        }
+
+        return parts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { hint in
+                !hint.isEmpty
+                && hint.count >= 3
+                && hint.count <= 60
+                && !hint.contains("@")  // skip user@host
+                && !hint.hasPrefix("~") // already handled as path
+                && !hint.hasPrefix("/") // already handled as path
+            }
+    }
+
+    /// Fire pre-prompt when toast first opens (before session starts)
+    func firePrePromptIfNeeded() {
+        guard requestMode == .transcribe else { return }
+        autoDetectProjectIfNeeded()
+        transcribeService.activeApp = activeApp
+        transcribeService.projectContext = selectedProject?.claudeMDSummary ?? ""
+        transcribeService.sessionContext = buildSessionContext()
+        // Wire the session context provider for auto-refresh
+        transcribeService.sessionContextProvider = { [weak self] in
+            self?.buildSessionContext() ?? ""
+        }
+        DebugLog.log("[PrePrompt] firePrePromptIfNeeded — project: \(selectedProject?.name ?? "nil"), ctx: \(transcribeService.projectContext.count), session: \(transcribeService.sessionContext.count)")
+        transcribeService.generatePrePrompt()
+        // Start auto-refresh loop — watches for new session activity while toast is open
+        transcribeService.startAutoRefresh()
+    }
+
+    /// Switch to a project and refresh all context (CLAUDE.md, sessions, pre-prompt)
+    func switchToProject(_ project: Project) {
+        selectedProject = project
+        refreshClaudeMDSummary(for: project)
+        refreshClaudeSessions()
+        // Auto-select the most recent session for this project
+        selectedClaudeSession = claudeSessions.first
+        transcribeService.activeApp = activeApp
+        transcribeService.projectContext = selectedProject?.claudeMDSummary ?? ""
+        transcribeService.sessionContext = buildSessionContext()
+        transcribeService.suggestedPrompts = []
+        transcribeService.resetHaikuSession()  // New project = new Haiku session
+        DebugLog.log("[PrePrompt] switchToProject(\(project.name)) — context: \(transcribeService.projectContext.count) chars, session: \(transcribeService.sessionContext.count) chars, autoSession: \(selectedClaudeSession?.title.prefix(30) ?? "none")")
+        transcribeService.generatePrePrompt()
+    }
+
+    /// Switch to a Claude Code session and regenerate pre-prompt
+    func switchToClaudeSession(_ session: ClaudeSession) {
+        selectedClaudeSession = session
+        transcribeService.sessionContext = buildSessionContext()
+        transcribeService.suggestedPrompts = []
+        transcribeService.resetHaikuSession()  // New session = new Haiku session
+        DebugLog.log("[PrePrompt] switchToClaudeSession(\(session.title.prefix(40))) — session context: \(transcribeService.sessionContext.count) chars")
+        transcribeService.generatePrePrompt()
+    }
+
+    /// Refresh a project's context summary from disk.
+    /// Tries CLAUDE.md first, then README.md, then Package.swift/Makefile for basic context.
+    private func refreshClaudeMDSummary(for project: Project) {
+        let basePath = project.path
+        var content: String?
+
+        // Try CLAUDE.md first (richest context)
+        if let c = try? String(contentsOfFile: basePath + "/CLAUDE.md", encoding: .utf8) {
+            content = c
+        }
+        // Fallback: README.md
+        else if let c = try? String(contentsOfFile: basePath + "/README.md", encoding: .utf8) {
+            content = c
+        }
+        // Fallback: Package.swift (Swift project structure)
+        else if let c = try? String(contentsOfFile: basePath + "/Package.swift", encoding: .utf8) {
+            content = "Swift project.\n\n" + c
+        }
+        // Fallback: package.json
+        else if let c = try? String(contentsOfFile: basePath + "/package.json", encoding: .utf8) {
+            content = "Node project.\n\n" + c
+        }
+
+        guard let content = content else {
+            DebugLog.log("[Context] No CLAUDE.md/README/Package found at \(basePath)")
+            return
+        }
+
+        let fresh = String(content.prefix(4000))
+        if project.claudeMDSummary != fresh {
+            if let idx = projectStore.projects.firstIndex(where: { $0.id == project.id }) {
+                projectStore.projects[idx].claudeMDSummary = fresh
+                selectedProject = projectStore.projects[idx]
+            }
+        }
+    }
+
+    // MARK: - Claude Code Session Integration
+
+    /// Represents a Claude Code session discovered from ~/.claude/projects/
+    struct ClaudeSession: Identifiable, Hashable {
+        let id: String          // UUID from filename
+        let title: String       // first user message (truncated)
+        let modifiedAt: Date
+        let filePath: String
+        let lineCount: Int
+    }
+
+    /// Currently selected Claude Code session (for context)
+    @Published var selectedClaudeSession: ClaudeSession?
+    /// Available Claude Code sessions for the selected project
+    @Published var claudeSessions: [ClaudeSession] = []
+
+    /// List Claude Code sessions for the current project, sorted by most recent
+    func refreshClaudeSessions() {
+        guard let project = selectedProject else {
+            claudeSessions = []
+            return
+        }
+
+        let encoded = project.path.replacingOccurrences(of: "/", with: "-")
+        let projectDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/projects/\(encoded)")
+
+        guard FileManager.default.fileExists(atPath: projectDir.path),
+              let files = try? FileManager.default.contentsOfDirectory(at: projectDir, includingPropertiesForKeys: [.contentModificationDateKey])
+        else {
+            claudeSessions = []
+            return
+        }
+
+        let jsonlFiles = files
+            .filter { $0.pathExtension == "jsonl" }
+            .compactMap { url -> ClaudeSession? in
+                let modDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                // Only show sessions from last 7 days
+                guard Date().timeIntervalSince(modDate) < 7 * 86400 else { return nil }
+
+                let sessionId = url.deletingPathExtension().lastPathComponent
+                let title = extractSessionTitle(from: url)
+                let lineCount = countLines(at: url)
+
+                // Skip tiny sessions (likely automated/internal)
+                guard lineCount > 4 else { return nil }
+
+                return ClaudeSession(
+                    id: sessionId,
+                    title: title,
+                    modifiedAt: modDate,
+                    filePath: url.path,
+                    lineCount: lineCount
+                )
+            }
+            .sorted { $0.modifiedAt > $1.modifiedAt }
+
+        claudeSessions = Array(jsonlFiles.prefix(10)) // top 10 recent
+
+        // Auto-select most recent if none selected
+        if selectedClaudeSession == nil, let newest = claudeSessions.first {
+            selectedClaudeSession = newest
+        }
+    }
+
+    /// Extract a title from the first user message in a session JSONL
+    private func extractSessionTitle(from url: URL) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return "Untitled" }
+        defer { handle.closeFile() }
+
+        // Read first 8KB to find the first user text message
+        let data = handle.readData(ofLength: 8192)
+        guard let content = String(data: data, encoding: .utf8) else { return "Untitled" }
+
+        for line in content.components(separatedBy: "\n") {
+            guard !line.isEmpty,
+                  let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  let msg = obj["message"] as? [String: Any],
+                  msg["role"] as? String == "user" else { continue }
+
+            if let text = msg["content"] as? String, text.count > 5 {
+                return String(text.prefix(60))
+            }
+            if let contentArr = msg["content"] as? [[String: Any]] {
+                for c in contentArr {
+                    if c["type"] as? String == "text",
+                       let text = c["text"] as? String, text.count > 5 {
+                        return String(text.prefix(60))
+                    }
+                }
+            }
+        }
+        return "Untitled"
+    }
+
+    private func countLines(at url: URL) -> Int {
+        guard let data = try? Data(contentsOf: url) else { return 0 }
+        return data.withUnsafeBytes { buf -> Int in
+            buf.filter { $0 == UInt8(ascii: "\n") }.count
+        }
+    }
+
+    /// Read context from a specific Claude Code session (or most recent if none selected)
+    func readClaudeCodeSessionContext() -> String {
+        guard let session = selectedClaudeSession else { return "" }
+
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: session.filePath)),
+              let content = String(data: data, encoding: .utf8) else { return "" }
+
+        let lines = content.components(separatedBy: "\n").suffix(200)
+        var messages: [String] = []
+
+        for line in lines {
+            guard !line.isEmpty,
+                  let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  let msg = obj["message"] as? [String: Any],
+                  let role = msg["role"] as? String else { continue }
+
+            if role == "user" {
+                if let text = msg["content"] as? String, text.count > 5 {
+                    messages.append("User: \(String(text.prefix(300)))")
+                } else if let contentArr = msg["content"] as? [[String: Any]] {
+                    for c in contentArr {
+                        if c["type"] as? String == "text",
+                           let text = c["text"] as? String, text.count > 5 {
+                            messages.append("User: \(String(text.prefix(300)))")
+                        }
+                    }
+                }
+            } else if role == "assistant" {
+                if let contentArr = msg["content"] as? [[String: Any]] {
+                    for c in contentArr {
+                        if c["type"] as? String == "text",
+                           let text = c["text"] as? String, text.count > 10 {
+                            messages.append("Claude: \(String(text.prefix(300)))")
+                        }
+                    }
+                }
+            }
+        }
+
+        let recent = messages.suffix(20)
+        guard !recent.isEmpty else { return "" }
+        DebugLog.log("[Transcribe] Read \(recent.count) messages from Claude session: \(session.title.prefix(40))")
+        return recent.joined(separator: "\n")
+    }
+
+    /// Build a compact session context string from recent thread messages.
+    /// Gives the enhance model awareness of what the user has been doing this session.
+    private func buildSessionContext() -> String {
+        var sections: [String] = []
+
+        // 1. Autoclaw's own session thread (clipboard, app switches, user messages)
+        let recent = threadMessages.suffix(10)
+        if !recent.isEmpty {
+            var lines: [String] = []
+            for msg in recent {
+                switch msg {
+                case .clipboard(_, let content, let app, _, let date):
+                    let preview = String(content.prefix(100))
+                    lines.append("[\(timeAgo(date))] Copied from \(app): \"\(preview)\"")
+                case .context(_, let app, let window, let date):
+                    lines.append("[\(timeAgo(date))] Switched to \(app)" + (window.isEmpty ? "" : " — \(window)"))
+                case .userMessage(_, let text, let date):
+                    let preview = String(text.prefix(120))
+                    lines.append("[\(timeAgo(date))] User said: \"\(preview)\"")
+                case .haiku(_, let suggestion, let date):
+                    lines.append("[\(timeAgo(date))] AI suggested: \(suggestion.title)")
+                case .execution(_, let output, let date):
+                    let preview = String(output.prefix(80))
+                    lines.append("[\(timeAgo(date))] Executed: \(preview)")
+                case .frictionOffer(_, let signal, let date):
+                    lines.append("[\(timeAgo(date))] Detected: \(signal.description)")
+                default:
+                    break
+                }
+            }
+            if !lines.isEmpty {
+                sections.append(lines.joined(separator: "\n"))
+            }
+        }
+
+        // 2. Active Claude Code session (if running for this project)
+        let claudeContext = readClaudeCodeSessionContext()
+        if !claudeContext.isEmpty {
+            sections.append("Claude Code conversation:\n\(claudeContext)")
+        }
+
+        return sections.joined(separator: "\n\n")
+    }
+
+    private func timeAgo(_ date: Date) -> String {
+        let seconds = Int(-date.timeIntervalSinceNow)
+        if seconds < 60 { return "\(seconds)s ago" }
+        if seconds < 3600 { return "\(seconds / 60)m ago" }
+        return "\(seconds / 3600)h ago"
     }
 
     private func setupARIA() {
@@ -536,6 +947,17 @@ final class AppState: ObservableObject {
         }
         showThread = true
 
+        // Pre-generate transcribe prompt suggestion as soon as toast is visible
+        DebugLog.log("[Session] startSession — mode: \(requestMode.rawValue), project: \(selectedProject?.name ?? "nil"), summary: \(selectedProject?.claudeMDSummary?.count ?? 0) chars")
+        if requestMode == .transcribe {
+            autoDetectProjectIfNeeded()
+            transcribeService.activeApp = activeApp
+            transcribeService.projectContext = selectedProject?.claudeMDSummary ?? ""
+            transcribeService.sessionContext = buildSessionContext()
+            DebugLog.log("[Session] Firing pre-prompt — projectCtx: \(transcribeService.projectContext.count), sessionCtx: \(transcribeService.sessionContext.count)")
+            transcribeService.generatePrePrompt()
+        }
+
         print("[Autoclaw] Session started: \(currentSessionId ?? "?")")
     }
 
@@ -601,6 +1023,7 @@ final class AppState: ObservableObject {
         }
         // Also force reset even if isTranscribing was false (stale state)
         transcribeService.forceReset()
+        transcribeService.stopAutoRefresh()
         transcribeStatus = .idle
         transcribeRawText = ""
         transcribeCleanText = ""
@@ -707,6 +1130,8 @@ final class AppState: ObservableObject {
         // In transcribe mode: clipboard triggers enhancement, not normal task flow
         if requestMode == .transcribe {
             let app = activeWindowService.effectiveAppName
+            transcribeService.projectContext = selectedProject?.claudeMDSummary ?? ""
+            transcribeService.sessionContext = buildSessionContext()
             transcribeService.enhanceClipboard(content, app: app)
             showThread = true
             return

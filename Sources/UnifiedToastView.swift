@@ -253,24 +253,56 @@ struct UnifiedToastView: View {
             switch appState.transcribeStatus {
             case .idle:
                 VStack(spacing: 10) {
-                    ZStack {
-                        Circle()
-                            .fill(Theme.teal.opacity(0.12))
-                            .frame(width: 44, height: 44)
-                        Image(systemName: "mic.fill")
-                            .font(.system(size: 18))
-                            .foregroundStyle(Theme.teal)
+                    // Pre-prompt suggestions (appear when ready, don't block anything)
+                    if !appState.transcribeService.suggestedPrompts.isEmpty {
+                        VStack(spacing: 6) {
+                            ForEach(Array(appState.transcribeService.suggestedPrompts.enumerated()), id: \.offset) { idx, suggestion in
+                                Button(action: { appState.transcribeService.injectPrePrompt(at: idx) }) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "sparkle")
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(Theme.purple)
+                                            .padding(.top, 2)
+                                        Text(suggestion)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(theme.textPrimary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                            .lineLimit(2)
+                                            .multilineTextAlignment(.leading)
+                                        Spacer()
+                                        Text("Use")
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .foregroundStyle(Theme.purple)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(Theme.purple.opacity(0.15))
+                                            .clipShape(Capsule())
+                                    }
+                                    .padding(10)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Theme.purple.opacity(colorScheme == .dark ? 0.08 : 0.05))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
                     }
-                    .frame(maxWidth: .infinity)
 
-                    Text("Speak and autoclaw will type at your cursor.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(theme.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    actionButton(title: "Start Transcribing", icon: "mic.fill", color: Theme.teal) {
+                    // Start button — always visible, with subtle loading hint if pre-prompt is generating
+                    actionButton(
+                        title: appState.transcribeService.isGeneratingPrompt ? "Start Transcribing" : "Start Transcribing",
+                        icon: "mic.fill",
+                        color: Theme.teal
+                    ) {
                         appState.toggleTranscribe()
+                    }
+                    .overlay(alignment: .trailing) {
+                        if appState.transcribeService.isGeneratingPrompt {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(Theme.purple)
+                                .padding(.trailing, 14)
+                        }
                     }
                 }
 
@@ -283,10 +315,32 @@ struct UnifiedToastView: View {
                         .foregroundStyle(Theme.teal)
                 }
 
-                Text("Speak naturally. Text will appear when you stop.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(theme.textMuted)
-                    .multilineTextAlignment(.center)
+                // Pre-prompt suggestions while listening
+                if !appState.transcribeService.suggestedPrompts.isEmpty {
+                    VStack(spacing: 4) {
+                        ForEach(Array(appState.transcribeService.suggestedPrompts.enumerated()), id: \.offset) { _, suggestion in
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(systemName: "sparkle")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(Theme.purple.opacity(0.6))
+                                    .padding(.top, 2)
+                                Text(suggestion)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(theme.textSecondary)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.purple.opacity(colorScheme == .dark ? 0.05 : 0.03))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                } else {
+                    Text("Speak naturally. Text will appear when you stop.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.textMuted)
+                        .multilineTextAlignment(.center)
+                }
 
                 actionButton(title: "Done Speaking", icon: "stop.fill", color: Theme.teal) {
                     appState.transcribeService.stop()
@@ -365,6 +419,23 @@ struct UnifiedToastView: View {
 
     // MARK: - Shared Components
 
+    /// Compact label for the selector
+    private var selectorLabel: String {
+        let projectName = appState.selectedProject?.name ?? "No project"
+        if let session = appState.selectedClaudeSession {
+            return "\(projectName) · \(String(session.title.prefix(20)))"
+        }
+        return projectName
+    }
+
+    private func sessionTimeLabel(_ date: Date) -> String {
+        let seconds = Int(-date.timeIntervalSinceNow)
+        if seconds < 60 { return "just now" }
+        if seconds < 3600 { return "\(seconds / 60)m ago" }
+        if seconds < 86400 { return "\(seconds / 3600)h ago" }
+        return "\(seconds / 86400)d ago"
+    }
+
     private func toastHeader(icon: String, title: String, color: Color) -> some View {
         HStack {
             HStack(spacing: 6) {
@@ -380,12 +451,59 @@ struct UnifiedToastView: View {
             .background(color.opacity(0.12))
             .clipShape(Capsule())
 
-            if let project = appState.selectedProject {
-                Text(project.name)
-                    .font(.system(size: 10))
-                    .foregroundStyle(theme.textMuted)
-                    .lineLimit(1)
+            // Project/session selector — subtle, tappable text
+            Menu {
+                if !appState.projectStore.projects.isEmpty {
+                    Section("Project") {
+                        ForEach(appState.projectStore.projects) { project in
+                            Button(action: { appState.switchToProject(project) }) {
+                                HStack {
+                                    Text(project.name)
+                                    if project.id == appState.selectedProject?.id {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !appState.claudeSessions.isEmpty {
+                    Section("Session") {
+                        ForEach(appState.claudeSessions) { session in
+                            Button(action: { appState.switchToClaudeSession(session) }) {
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        Text(session.title)
+                                            .lineLimit(1)
+                                        Text(sessionTimeLabel(session.modifiedAt))
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    if session.id == appState.selectedClaudeSession?.id {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Group {
+                    if appState.transcribeService.isGeneratingPrompt {
+                        Text(appState.selectedProject?.name ?? "reading context…")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Theme.purple)
+                            .lineLimit(1)
+                    } else {
+                        Text(appState.selectedProject?.name ?? "select project")
+                            .font(.system(size: 10))
+                            .foregroundStyle(theme.textMuted)
+                            .lineLimit(1)
+                    }
+                }
             }
+            .menuStyle(.borderlessButton)
 
             Spacer()
 

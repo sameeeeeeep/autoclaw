@@ -42,7 +42,7 @@ final class WhisperKitService: ObservableObject {
 
     private static let hallucinationPatterns: Set<String> = [
         "thanks for watching", "thank you for watching", "subscribe",
-        "like and subscribe", "see you next time", "bye", "you", "the",
+        "like and subscribe", "see you next time",
     ]
 
     private func isHallucination(_ text: String) -> Bool {

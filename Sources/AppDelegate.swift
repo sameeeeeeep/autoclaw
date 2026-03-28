@@ -156,6 +156,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     s.requestMode = .transcribe
                     s.showThread = true
                     self?.showThreadToast()
+                    // Fire pre-prompt immediately so user sees loading state
+                    s.firePrePromptIfNeeded()
                 } else if !s.sessionActive {
                     // State 2: Toast visible, no session → start session + mode action
                     s.startSession()

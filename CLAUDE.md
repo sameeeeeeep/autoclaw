@@ -1,32 +1,27 @@
 # Autoclaw — CLAUDE.md
 
+## Current Focus (2026-03-29)
+- **Persistent Haiku sessions**: Pre-prompt and enhance share a single persistent Haiku CLI session per project. Context loaded once on first call (`--session-id`), follow-ups use `--resume`. No redundant context reloading.
+- **Pre-prompt predictions**: 2 context-aware predictions shown as tappable cards with "Use" buttons. A:/B: structured format from Haiku. Considers branching possibilities (worked/didn't, continuing/pivoting). Auto-refreshes every 15s when session activity changes.
+- **Non-blocking pre-prompt**: Loading indicator is a subtle spinner on the Start button, not a blocking card. User can start transcribing immediately while predictions generate in background.
+- **Transcribe pipeline**: Raw WhisperKit output → inject immediately at cursor → enhance in background. Pre-stop + post-stop chunk drain prevents race condition loss.
+- **Project/session context**: Auto-detects project from window title, auto-selects most recent Claude Code session, reads JSONL conversation history. Context fallback chain: CLAUDE.md → README.md → Package.swift → package.json.
+- **Next**: OpenClaw/ClawHub lazy skill discovery, Haiku cloud routing for Analyze mode, polish + ship.
+
 ## What this is
-Native macOS app (Swift/SwiftUI) — ambient AI that sits at the OS level and runs your digital life on autopilot. Not a copilot, not a chatbot. An agentic intelligence layer at the interface level.
+Native macOS app (Swift/SwiftUI) — ambient AI at the OS level. Not a copilot, not a chatbot. An agentic intelligence layer.
 
-**Tagline:** autoclaw — ambient AI for macOS
-**Org:** The Last Prompt — mission: write the last prompt (prompt-less AI where AI IS the interface)
-**Site:** thelastprompt.ai
-
-**Value prop arc:** awareness → action → reach → memory → trust
-- It already sees what you see (Vision Pipeline)
-- It knows what to do about it (Modes)
-- It reaches everywhere you work (Connectors/MCP)
-- You do it once, it does it forever (Learn)
-- Everything stays yours (Local-first, open source)
+**Tagline:** autoclaw — ambient AI for macOS | **Org:** The Last Prompt (thelastprompt.ai)
 
 ## Four Modes
 
 ### 1. Transcribe (voice-to-text) — PRIMARY VALUE PROP
 ```
-Mic → WhisperKit (local Neural Engine) → Cleanup (Qwen or Haiku, configurable) → inject at cursor → Smart Enhance (Haiku/Sonnet, configurable, non-blocking)
+Mic → WhisperKit (local) → inject raw at cursor → Smart Enhance (Haiku/Sonnet, non-blocking)
 ```
-Two-step pipeline:
-1. **Cleanup** (pre-injection) — strip filler words ("um", "uh", "like"), fix grammar, basic formatting. Needs to be fast. Configurable: Qwen (local, ~1-2s, free) vs Haiku (cloud, ~2-3s, smarter) vs none (raw). Default: Qwen.
-2. **Smart Enhance** (post-injection, non-blocking) — context-aware rewrite based on active app. Gmail gets professional tone, Slack stays casual, code editor gets proper syntax. Configurable: Haiku (default, fast+smart) vs Sonnet (slower, more capable) vs none.
+Persistent Haiku session per project: first call primes with CLAUDE.md + session context, follow-ups resume. Pre-prompt fires when toast opens — 2 predictions as tappable "Use" cards. Auto-refreshes as session progresses. Raw text injected immediately on stop. Enhanced version offered in background. Pre-prompt and enhance share the same Haiku session thread.
 
-The killer feature. Speak anywhere, cleaned-up text appears at cursor, then a smarter version is offered in the background. Any app becomes a Claude workspace.
-
-**Status: FULLY BUILT** — WhisperKit STT (base.en, Neural Engine) → cleanup (Qwen/Haiku/none, configurable) → CursorInjector → smart enhance (Haiku/Sonnet/none, configurable). Apple SFSpeech available as fallback STT. All settings in SettingsView.
+**Status: FULLY BUILT** — WhisperKit STT (base.en, Neural Engine) → raw inject → smart enhance (Haiku/Sonnet/none). Persistent Haiku pre-prompt with A:/B: format, auto-refresh, feed-back loop. Apple SFSpeech as fallback STT.
 
 ### 2. Analyze (ambient detection)
 ```
@@ -177,25 +172,24 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 - Gate 2: "Execute these exact tools" (run) — with intent lock diff
 
 ## Key Decisions
+- Persistent Haiku session per project: prime once with --session-id, resume with --resume, no context reloading (2026-03-29)
+- Pre-prompt uses A:/B: structured format — Haiku returns exactly 2 labeled predictions, parser extracts cleanly (2026-03-29)
+- Pre-prompt considers branching possibilities (worked/didn't, continuing/pivoting) but isn't locked into any framing (2026-03-29)
+- Pre-prompt is non-blocking: subtle spinner on Start button, user can transcribe immediately (2026-03-29)
+- Auto-refresh predictions every 15s when Claude Code session activity changes (hash-based dedup) (2026-03-29)
+- Feed-back loop: after transcription, tell Haiku what user said, get fresh predictions (2026-03-29)
+- Transcribe pipeline: skip cleanup, inject raw immediately, enhance in background (2026-03-28)
+- Pre-prompt fires BEFORE user speaks — uses project CLAUDE.md + active Claude Code session JSONL (2026-03-28)
+- Pre-prompt and enhance share same persistent Haiku session thread (2026-03-28)
+- Auto-detect project from ANY window title (regex path extraction), auto-select most recent session (2026-03-28)
+- Context fallback chain: CLAUDE.md → README.md → Package.swift → package.json (2026-03-28)
+- Chunk drain pattern: pre-stop + post-stop drain of WhisperKit chunks to prevent race condition loss (2026-03-28)
 - Qwen is just a bouncer, not a classifier — keep its prompt minimal (2026-03-24)
 - Haiku does all smart routing, matched against user's installed MCP tools (2026-03-24)
 - Event-driven triggering, not timer-based (don't waste CPU when idle) (2026-03-24)
-- Pre-loaded templates ship with the app (don't make user train from scratch) (2026-03-24)
-- OpenClaw skills lazy-load on demand, never bulk load 13K+ (2026-03-24)
-- OCR capped at ~150 chars of UI labels per capture (full screen text kills the buffer) (2026-03-24)
-- Screenshots sent to Claude ONLY after user approval (not to Qwen/Haiku) (2026-03-24)
-- autoclaw uses OAuth for Claude/Haiku, not API keys (2026-03-24)
-- Learn mode bypasses Qwen — Qwen can't learn, only match (2026-03-24)
-- Transcribe has TWO steps: cleanup (pre-inject) and smart enhance (post-inject) (2026-03-26)
-- Cleanup is configurable: Qwen (local/fast), Haiku (cloud/smarter), or none (raw). Default: Qwen (2026-03-26)
-- Smart enhance is configurable: Haiku (default), Sonnet (more capable), or none (2026-03-26)
 - Fn is the universal "do" key, Shift cycles modes, double-tap Option dismisses (2026-03-26)
-- Mode order: Transcribe → Analyze → Task → Learn (removed To Do and Question — not needed) (2026-03-26)
-- Transcribe mode is the primary value prop — most achievable, daily-use, gateway feature (2026-03-26)
 - WhisperKit (base.en) is the primary STT — Neural Engine, local, much better accuracy than Apple SFSpeech (2026-03-26)
-- SPM migration done — Package.swift + WhisperKit dependency, legacy Makefile build as fallback (2026-03-26)
-- Analyze pipeline routes locally first (templates → MCP → Claude), Haiku cloud routing is a future optimization (2026-03-26)
-- STT engine is configurable: WhisperKit (default) vs Apple Speech (fallback). Settings persist via UserDefaults (2026-03-26)
+- autoclaw uses OAuth for Claude/Haiku, not API keys (2026-03-24)
 
 ## Build Priority
 1. **OpenClaw/ClawHub** — lazy skill discovery for Analyze mode routing

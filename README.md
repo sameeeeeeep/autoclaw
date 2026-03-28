@@ -43,17 +43,17 @@ Cycle modes with **Left Shift**. Start/stop with **Fn**. Dismiss with **double-t
 
 ### Transcribe Mode — "I'll type what you say"
 
-The primary feature. Speak anywhere, cleaned-up text appears at your cursor, then a smarter version is offered.
+The primary feature. Speak anywhere, raw text appears at your cursor immediately, then a smarter version is offered in background.
 
 ```
-Mic → WhisperKit (local, Neural Engine) → Cleanup → inject at cursor → Smart Enhance (background)
+Mic → WhisperKit (local, Neural Engine) → inject raw at cursor → Smart Enhance (background, non-blocking)
 ```
 
-**Two-step pipeline:**
-1. **Cleanup** (pre-injection) — strips filler words, fixes grammar. Configurable: Qwen (local, fast, free) / Haiku (cloud, smarter) / none (raw)
-2. **Smart Enhance** (post-injection, non-blocking) — context-aware rewrite based on active app + screen content. Gmail gets professional tone, Slack stays casual, code gets proper syntax. Configurable: Haiku / Sonnet / none
+**Pre-prompt predictions:** When the toast opens, a persistent Haiku session reads your project context (CLAUDE.md, README) and active Claude Code session history, then predicts the two most likely things you'll say next. Predictions auto-refresh as the session progresses. Tap a suggestion to inject it directly.
 
-**STT Engine:** WhisperKit (base.en, Neural Engine, local) with Apple SFSpeech as fallback. Background chunk transcription every ~25s with hallucination filtering.
+**Smart Enhance** (post-injection, non-blocking) — context-aware rewrite using the same Haiku session. Proactively adds specific details from project/session context. Configurable: Haiku / Sonnet / none.
+
+**STT Engine:** WhisperKit (base.en, Neural Engine, local) with Apple SFSpeech as fallback. Background chunk transcription every ~25s with hallucination filtering and pre-stop/post-stop drain to prevent chunk loss.
 
 ### Analyze Mode — "I'll watch, you work"
 
@@ -199,9 +199,8 @@ The `ChromeExtension/` directory contains a Manifest V3 extension that captures 
 All configurable in the app's Settings tab:
 
 - **STT Engine:** WhisperKit (default) or Apple Speech
-- **Cleanup Provider:** Qwen (local) / Haiku (cloud) / None
 - **Smart Enhance:** Haiku (default) / Sonnet / None
-- **Projects:** Multiple project directories with context
+- **Projects:** Multiple project directories with context, auto-detected from active window
 - **Ollama:** Health check, model status
 
 ---
