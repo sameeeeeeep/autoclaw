@@ -64,6 +64,7 @@ final class AnalyzePipeline: ObservableObject {
     private let ollamaService: OllamaService
     private let capabilityMap: CapabilityMap
     private let workflowStore: WorkflowStore
+    let haikuAnalyzer = HaikuAnalyzer()
 
     // MARK: - Rate Limiting
 
@@ -211,23 +212,75 @@ final class AnalyzePipeline: ObservableObject {
     // MARK: - Haiku Router
 
     private func routeWithHaiku(detection: QwenResponse, buffer: String) async -> FulfilmentPlan? {
-        // Check templates first (no Haiku needed for exact matches)
+        // Fast path: check local templates/MCP first (no cloud call needed)
         if let templateMatch = matchTemplate(detection: detection) {
             return templateMatch
         }
-
-        // Check MCP capabilities
         if let mcpMatch = matchMCPCapability(detection: detection) {
             return mcpMatch
         }
 
-        // Fall through to Claude custom
-        return FulfilmentPlan(
-            route: .claudeCustom,
-            toolName: nil,
-            templateName: nil,
-            steps: [detection.description]
+        // Slow path: ask Haiku for intelligent matching
+        // Haiku sees the full context + catalog of all workflows/skills/capabilities
+        // and can match skill chains (multiple skills in sequence)
+        let activeApp = contextBuffer.currentApp ?? ""
+        let windowTitle = contextBuffer.currentWindow ?? ""
+        let url = contextBuffer.currentURL
+        let screenOCR = contextBuffer.latestOCR
+
+        let result = await haikuAnalyzer.analyze(
+            activeApp: activeApp,
+            windowTitle: windowTitle,
+            url: url,
+            recentActivity: buffer,
+            screenOCR: screenOCR,
+            screenshotPath: nil,
+            savedWorkflows: workflowStore.workflows,
+            preloadedTemplates: PreloadedTemplates.all,
+            installedCapabilities: capabilityMap.capabilities
         )
+
+        guard let match = result, match.confidence >= 0.6 else {
+            // Haiku didn't find a good match — fall through to Claude custom
+            return FulfilmentPlan(
+                route: .claudeCustom,
+                toolName: nil,
+                templateName: nil,
+                steps: [detection.description]
+            )
+        }
+
+        switch match.matchType {
+        case .workflow:
+            return FulfilmentPlan(
+                route: .template,
+                toolName: nil,
+                templateName: match.matchedName,
+                steps: match.suggestedSteps
+            )
+        case .skill:
+            return FulfilmentPlan(
+                route: .template,
+                toolName: nil,
+                templateName: match.matchedName,
+                steps: match.suggestedSteps
+            )
+        case .skillChain:
+            // Chain of skills — steps are the skills in order
+            return FulfilmentPlan(
+                route: .template,
+                toolName: nil,
+                templateName: match.skillChain.joined(separator: " → "),
+                steps: match.suggestedSteps
+            )
+        case .custom:
+            return FulfilmentPlan(
+                route: .claudeCustom,
+                toolName: nil,
+                templateName: nil,
+                steps: match.suggestedSteps.isEmpty ? [detection.description] : match.suggestedSteps
+            )
+        }
     }
 
     /// Match against learned workflows and pre-loaded templates

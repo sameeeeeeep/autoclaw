@@ -219,7 +219,10 @@ final class TranscribeService: ObservableObject {
         do {
             let result = try await callClaudeCLI(prompt: prompt, model: "haiku")
             let cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !cleaned.isEmpty { return cleaned }
+            if !cleaned.isEmpty && !cleaned.contains("\"type\":\"error\"") && !cleaned.hasPrefix("{") {
+                return cleaned
+            }
+            print("[Transcribe] Haiku cleanup returned error, using raw text")
         } catch {
             print("[Transcribe] Haiku cleanup failed: \(error)")
         }
@@ -244,41 +247,6 @@ final class TranscribeService: ObservableObject {
         status = .done
     }
 
-    // MARK: - Screen Context
-
-    /// Capture screenshot via screencapture CLI, then OCR it for enhance context
-    private func captureScreenContext() -> String? {
-        let tmpPath = NSTemporaryDirectory() + "autoclaw_enhance_\(ProcessInfo.processInfo.processIdentifier).png"
-
-        // Use screencapture CLI (works on all macOS versions)
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = ["-x", "-C", tmpPath]  // -x no sound, -C capture cursor
-        try? process.run()
-        process.waitUntilExit()
-
-        defer { try? FileManager.default.removeItem(atPath: tmpPath) }
-
-        // Load as CGImage
-        guard let dataProvider = CGDataProvider(url: URL(fileURLWithPath: tmpPath) as CFURL),
-              let cgImage = CGImage(pngDataProviderSource: dataProvider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else {
-            return nil
-        }
-
-        // Get cursor position for proximity ranking
-        let cursorLocation = NSEvent.mouseLocation
-        let screenSize = NSScreen.main?.frame.size ?? CGSize(width: 1920, height: 1080)
-
-        // Run OCR
-        let observations = ScreenOCR.recognizeText(
-            in: cgImage,
-            cursorLocation: cursorLocation,
-            imageSize: screenSize
-        )
-
-        return ScreenOCR.buildContext(from: observations, maxLength: 800)
-    }
-
     // MARK: - Smart Enhancement
 
     private func enhanceWithModel(text: String, app: String) async {
@@ -288,59 +256,44 @@ final class TranscribeService: ObservableObject {
         isEnhancing = true
         enhancedText = ""
 
-        // Capture what's on screen for context
-        let screenContext = captureScreenContext()
-
         let appContext: String
         switch app.lowercased() {
-        case let a where a.contains("claude"):
-            appContext = "The user is on Claude (AI assistant). Improve this as a clear, specific AI prompt with good structure."
         case let a where a.contains("gmail") || a.contains("mail"):
-            appContext = "The user is composing an email. Polish this into a professional, clear email message."
-        case let a where a.contains("freepik") || a.contains("midjourney") || a.contains("dall"):
-            appContext = "The user is on an image generation tool. Transform this into a detailed, effective image generation prompt."
+            appContext = "email — professional and clear"
         case let a where a.contains("slack") || a.contains("discord") || a.contains("teams"):
-            appContext = "The user is in a messaging app. Keep casual but clear and well-structured."
+            appContext = "messaging — casual but clear"
         case let a where a.contains("notion") || a.contains("docs") || a.contains("word"):
-            appContext = "The user is writing a document. Polish for clarity, grammar, and professional tone."
+            appContext = "document — polished and flowing"
         case let a where a.contains("twitter") || a.contains("x.com") || a.contains("linkedin"):
-            appContext = "The user is on social media. Make this punchy, engaging, and platform-appropriate."
-        case let a where a.contains("code") || a.contains("xcode") || a.contains("terminal") || a.contains("iterm"):
-            appContext = "The user is in a code editor or terminal. Format as appropriate code comment or commit message."
+            appContext = "social media — punchy and engaging"
+        case let a where a.contains("terminal") || a.contains("xcode") || a.contains("code"):
+            appContext = "code/terminal — technical and precise"
         default:
-            appContext = "Improve this text for clarity and effectiveness. Keep the original intent."
-        }
-
-        var screenSection = ""
-        if let ctx = screenContext {
-            screenSection = """
-
-            What's visible on the user's screen right now:
-            \(ctx)
-
-            Use this screen context to make the enhanced text more relevant. For example, if they're replying to an email, \
-            match the tone and reference what's being discussed. If they're in a code review, use technical language.
-            """
+            appContext = "general — clear and effective"
         }
 
         let prompt = """
-        You are a smart writing assistant. The user just dictated the following text via voice:
+        Rewrite this dictated text to be better. Keep the user's voice and meaning. \
+        Make it sharper and clearer. If it's already good, return it mostly as-is. \
+        Tone: \(appContext). Active app: \(app). \
+        Return ONLY the improved text, nothing else.
 
         "\(text)"
-
-        Context: \(appContext)
-        Active app: \(app)
-        \(screenSection)
-
-        Return ONLY the improved version. No explanations, no quotes, no prefixes. Just the enhanced text.
         """
 
         do {
             let result = try await callClaudeCLI(prompt: prompt, model: provider.modelFlag)
             let cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !cleaned.isEmpty && cleaned != text {
+            // Guard against API errors leaking into the UI
+            if !cleaned.isEmpty && cleaned != text
+                && !cleaned.contains("\"type\":\"error\"")
+                && !cleaned.contains("authentication_error")
+                && !cleaned.contains("Failed to authenticate")
+                && !cleaned.hasPrefix("{") {
                 enhancedText = cleaned
                 print("[Transcribe] Enhanced: \(cleaned.prefix(80))...")
+            } else if !cleaned.isEmpty {
+                print("[Transcribe] Enhancement returned error/garbage, discarding: \(cleaned.prefix(200))")
             }
         } catch {
             print("[Transcribe] Enhancement failed: \(error)")
@@ -369,16 +322,30 @@ final class TranscribeService: ObservableObject {
                 let homePath = home.path
                 var env = ProcessInfo.processInfo.environment
                 env["HOME"] = homePath
-                env["PATH"] = "\(homePath)/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
-                // Keep CLAUDE_CODE_OAUTH_TOKEN (needed for auth) but strip session vars
-                // that cause the child to think it's a nested session
-                env.removeValue(forKey: "CLAUDE_CODE_SESSION_ID")
-                env.removeValue(forKey: "CLAUDE_CODE_THREAD_ID")
-                env.removeValue(forKey: "CLAUDE_CODE_ENTRY_POINT")
-                env.removeValue(forKey: "CLAUDE_CODE_ENTRYPOINT")
-                env.removeValue(forKey: "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST")
-                env.removeValue(forKey: "CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES")
-                env.removeValue(forKey: "CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL")
+                // Ensure claude CLI is on PATH — prepend common locations
+                let extraPaths = "\(homePath)/.local/bin:/usr/local/bin:/opt/homebrew/bin"
+                let existingPath = env["PATH"] ?? "/usr/bin:/bin"
+                env["PATH"] = "\(extraPaths):\(existingPath)"
+                // Strip session vars that cause the child to think it's a nested session
+                for key in ["CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_THREAD_ID",
+                            "CLAUDE_CODE_ENTRY_POINT", "CLAUDE_CODE_ENTRYPOINT",
+                            "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
+                            "CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES",
+                            "CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL"] {
+                    env.removeValue(forKey: key)
+                }
+                // Ensure OAuth token is available — CLI needs it to authenticate.
+                // When launched from terminal it's in the env; from Finder we read credentials file.
+                if env["CLAUDE_CODE_OAUTH_TOKEN"] == nil || env["CLAUDE_CODE_OAUTH_TOKEN"]?.isEmpty == true {
+                    let credPath = home.appendingPathComponent(".claude/.credentials.json").path
+                    if let data = FileManager.default.contents(atPath: credPath),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let oauth = json["claudeAiOauth"] as? [String: Any],
+                       let token = oauth["accessToken"] as? String, !token.isEmpty {
+                        env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+                        print("[Transcribe] Loaded OAuth token from credentials file")
+                    }
+                }
                 process.environment = env
 
                 let stdoutPipe = Pipe()
@@ -398,9 +365,14 @@ final class TranscribeService: ObservableObject {
                         print("[Transcribe] claude CLI stderr: \(errOutput.prefix(500))")
                     }
 
-                    if process.terminationStatus != 0 && output.isEmpty {
+                    // Fail on non-zero exit OR if stdout looks like an error response
+                    if process.terminationStatus != 0
+                        || output.contains("\"type\":\"error\"")
+                        || output.contains("authentication_error")
+                        || output.contains("Failed to authenticate") {
+                        let msg = !errOutput.isEmpty ? errOutput : output
                         continuation.resume(throwing: NSError(domain: "Transcribe", code: Int(process.terminationStatus),
-                            userInfo: [NSLocalizedDescriptionKey: "claude CLI failed: \(errOutput.prefix(200))"]))
+                            userInfo: [NSLocalizedDescriptionKey: "claude CLI failed: \(msg.prefix(200))"]))
                     } else {
                         continuation.resume(returning: output)
                     }

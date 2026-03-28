@@ -25,10 +25,10 @@ final class ToastWindow: NSPanel {
     var maxHeight: CGFloat = 500
 
     func show(with view: some View) {
-        let hosting = NSHostingView(rootView: AnyView(view))
+        let hosting = FirstMouseHostingView(rootView: AnyView(view))
 
         // Use visual effect view as backdrop for system material
-        let effect = NSVisualEffectView()
+        let effect = FirstMouseVisualEffectView()
         effect.material = .hudWindow
         effect.blendingMode = .behindWindow
         effect.state = .active
@@ -61,7 +61,7 @@ final class ToastWindow: NSPanel {
         }
 
         alphaValue = 1
-        orderFront(nil)
+        makeKeyAndOrderFront(nil)
         level = .floating
         NSLog("[Autoclaw] Toast shown: \(w)x\(h)")
     }
@@ -76,9 +76,9 @@ final class ToastWindow: NSPanel {
         })
     }
 
-    /// Set to true for toasts that need keyboard input (clarification)
-    var allowsKeyboard = false
-    override var canBecomeKey: Bool { allowsKeyboard }
+    /// nonactivatingPanel already prevents stealing focus from other apps,
+    /// but we MUST be key-capable so SwiftUI buttons receive clicks.
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
     /// Enable file drag & drop — calls handler with dropped file URLs
@@ -101,6 +101,18 @@ final class ToastWindow: NSPanel {
     }
 }
 
+// MARK: - First-Mouse Views
+// These subclasses ensure clicks work immediately on a non-key floating panel
+// without requiring a first click to "activate" the window.
+
+private final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+private final class FirstMouseVisualEffectView: NSVisualEffectView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 // MARK: - Drop Target View
 
 private final class DropTargetView: NSView {
@@ -111,6 +123,10 @@ private final class DropTargetView: NSView {
         self.handler = handler
         registerForDraggedTypes([.fileURL])
     }
+
+    // CRITICAL: Pass all non-drag mouse events through to underlying SwiftUI buttons.
+    // Without this, the drop overlay sits on top and swallows every click.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         return .copy

@@ -123,7 +123,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupToastWindows() {
         toastWindow = ToastWindow()
-        toastWindow.allowsKeyboard = true  // needs text input
         projectPickerWindow = ToastWindow()
         frictionToastWindow = ToastWindow()  // legacy, kept for friction-only display
     }

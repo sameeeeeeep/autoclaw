@@ -35,6 +35,13 @@ final class ContextBuffer: ObservableObject {
     @Published var entries: [BufferEntry] = []
     @Published var lastEventAt: Date?
 
+    /// Most recent app/window/URL — updated on every app switch
+    private(set) var currentApp: String?
+    private(set) var currentWindow: String?
+    private(set) var currentURL: String?
+    /// Most recent OCR text
+    private(set) var latestOCR: String?
+
     /// Snapshot of the buffer as a formatted text block for LLM consumption
     var snapshot: String {
         pruneExpired()
@@ -61,6 +68,9 @@ final class ContextBuffer: ObservableObject {
     // MARK: - Ingest
 
     func recordAppSwitch(app: String, window: String?, url: String?) {
+        currentApp = app
+        currentWindow = window
+        currentURL = url
         var text = "Switched to \(app)"
         if let w = window, !w.isEmpty { text += " — \(w)" }
         if let u = url, !u.isEmpty { text += " (\(u))" }
@@ -74,6 +84,7 @@ final class ContextBuffer: ObservableObject {
 
     func recordOCR(text: String, app: String) {
         guard !text.isEmpty else { return }
+        latestOCR = text
         let preview = String(text.prefix(150))
         append(.ocr, text: "Screen (\(app)): \(preview)")
     }
