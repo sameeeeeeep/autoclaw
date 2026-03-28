@@ -5,7 +5,7 @@ import os
 private let logger = Logger(subsystem: "com.autoclaw.app", category: "Hotkey")
 
 /// Monitors for global hotkeys to control sessions.
-/// - Left Shift (tap): start/toggle session in current pill mode
+/// - Right Shift (tap): start/toggle session in current pill mode
 /// - Fn (tap): cycle mode (if session on) / start session (if off)
 /// - Double-tap Left Option (⌥): end session / dismiss toast
 /// - Double-tap Caps Lock: toggle voice mode (transcription)
@@ -30,9 +30,9 @@ final class GlobalHotkeyMonitor {
     private var fnDown = false
     private var fnConsumed = false  // set when Fn+Space fires, suppresses pause on Fn release
 
-    // Left Shift tracking (single tap — start session)
-    private var leftShiftDown = false
-    private var leftShiftConsumed = false  // set if other keys pressed while shift held
+    // Right Shift tracking (single tap — start session)
+    private var rightShiftDown = false
+    private var rightShiftConsumed = false  // set if other keys pressed while shift held
 
     // Double-tap tracking (Left Option key — end session)
     private var lastLeftOptionUpTime: CFAbsoluteTime = 0
@@ -168,21 +168,21 @@ final class GlobalHotkeyMonitor {
             fnConsumed = false
         }
 
-        // --- Left Shift (keyCode 56 = kVK_Shift) → start/toggle session ---
-        if keyCode == 56 {
+        // --- Right Shift (keyCode 60 = kVK_RightShift) → start/toggle session ---
+        if keyCode == 60 {
             let shiftPressed = flags.contains(.maskShift)
-            if shiftPressed && !leftShiftDown {
-                leftShiftDown = true
-                leftShiftConsumed = false
-            } else if !shiftPressed && leftShiftDown {
-                leftShiftDown = false
-                if !leftShiftConsumed {
+            if shiftPressed && !rightShiftDown {
+                rightShiftDown = true
+                rightShiftConsumed = false
+            } else if !shiftPressed && rightShiftDown {
+                rightShiftDown = false
+                if !rightShiftConsumed {
                     let otherMods: CGEventFlags = [.maskControl, .maskAlternate, .maskCommand]
                     if flags.intersection(otherMods).isEmpty {
-                        fireToggle(source: "Left Shift (CGEvent)")
+                        fireToggle(source: "Right Shift (CGEvent)")
                     }
                 }
-                leftShiftConsumed = false
+                rightShiftConsumed = false
             }
         }
 
@@ -223,8 +223,8 @@ final class GlobalHotkeyMonitor {
     }
 
     private func handleCGKeyDown(keyCode: Int64, flags: CGEventFlags) {
-        // Any key pressed while Left Shift held → consume (don't fire toggle on release)
-        if leftShiftDown { leftShiftConsumed = true }
+        // Any key pressed while Right Shift held → consume (don't fire toggle on release)
+        if rightShiftDown { rightShiftConsumed = true }
 
         // Option + Z (keyCode 6) → screenshot
         if keyCode == 6 && flags.contains(.maskAlternate) {
@@ -258,21 +258,21 @@ final class GlobalHotkeyMonitor {
             fnConsumed = false
         }
 
-        // --- Left Shift (keyCode 56) → start/toggle session ---
-        if event.keyCode == 56 {
+        // --- Right Shift (keyCode 60) → start/toggle session ---
+        if event.keyCode == 60 {
             let shiftPressed = event.modifierFlags.contains(.shift)
-            if shiftPressed && !leftShiftDown {
-                leftShiftDown = true
-                leftShiftConsumed = false
-            } else if !shiftPressed && leftShiftDown {
-                leftShiftDown = false
-                if !leftShiftConsumed {
+            if shiftPressed && !rightShiftDown {
+                rightShiftDown = true
+                rightShiftConsumed = false
+            } else if !shiftPressed && rightShiftDown {
+                rightShiftDown = false
+                if !rightShiftConsumed {
                     let otherMods: NSEvent.ModifierFlags = [.control, .option, .command]
                     if event.modifierFlags.intersection(otherMods).isEmpty {
-                        fireToggle(source: "Left Shift (NSEvent)")
+                        fireToggle(source: "Right Shift (NSEvent)")
                     }
                 }
-                leftShiftConsumed = false
+                rightShiftConsumed = false
             }
         }
 
@@ -313,8 +313,8 @@ final class GlobalHotkeyMonitor {
     }
 
     private func handleNSKeyDown(_ event: NSEvent) {
-        // Any key pressed while Left Shift held → consume
-        if leftShiftDown { leftShiftConsumed = true }
+        // Any key pressed while Right Shift held → consume
+        if rightShiftDown { rightShiftConsumed = true }
 
         // Option + Z (keyCode 6) → screenshot
         if event.keyCode == 6 && event.modifierFlags.contains(.option) {

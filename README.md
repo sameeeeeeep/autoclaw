@@ -39,7 +39,7 @@ Built by [The Last Prompt](https://thelastprompt.ai) — mission: write the last
 
 ## Four Modes
 
-Cycle modes with **Left Shift**. Start/stop with **Fn**. Dismiss with **double-tap Left Option**.
+Cycle modes with **Right Shift**. Start/stop with **Fn**. Dismiss with **double-tap Left Option**.
 
 ### Transcribe Mode — "I'll type what you say"
 
@@ -50,6 +50,8 @@ Mic → WhisperKit (local, Neural Engine) → inject raw at cursor → Smart Enh
 ```
 
 **Pre-prompt predictions:** When the toast opens, a persistent Haiku session reads your project context (CLAUDE.md, README) and active Claude Code session history, then predicts the two most likely things you'll say next. Predictions auto-refresh as the session progresses. Tap a suggestion to inject it directly.
+
+**ELI5 Dialog:** The same Haiku call also generates a 2-line TV character exchange explaining what's happening in your session. Choose from 8 character pairs: Gilfoyle & Dinesh (Silicon Valley), David & Moira (Schitt's Creek), Dwight & Jim (The Office), Chandler & Joey (Friends), Rick & Morty, Sherlock & Watson, Jesse & Walter (Breaking Bad), or Tony & JARVIS (Iron Man). Zero extra latency — piggybacked on the prediction call.
 
 **Smart Enhance** (post-injection, non-blocking) — context-aware rewrite using the same Haiku session. Proactively adds specific details from project/session context. Configurable: Haiku / Sonnet / none.
 
@@ -155,7 +157,7 @@ make dmg        # create distributable DMG
 | Shortcut | Action |
 |----------|--------|
 | **Fn** (tap) | Open toast / start session / stop session |
-| **Left Shift** (tap) | Cycle modes: Transcribe → Analyze → Task → Learn |
+| **Right Shift** (tap) | Cycle modes: Transcribe → Analyze → Task → Learn |
 | **Left Option ×2** | Full dismiss (end session, clean slate, reset to Transcribe) |
 | **Option + Z** | Dismiss toast without ending session |
 | **Option + X** | Cycle request sub-mode |
@@ -200,6 +202,7 @@ All configurable in the app's Settings tab:
 
 - **STT Engine:** WhisperKit (default) or Apple Speech
 - **Smart Enhance:** Haiku (default) / Sonnet / None
+- **ELI5 Dialog Theme:** 8 TV character pairs for session commentary
 - **Projects:** Multiple project directories with context, auto-detected from active window
 - **Ollama:** Health check, model status
 

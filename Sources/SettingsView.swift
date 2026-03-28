@@ -198,6 +198,25 @@ struct SettingsView: View {
 
                         Divider()
 
+                        // ELI5 Dialog Theme
+                        Text("ELI5 Dialog")
+                            .font(.system(size: 12, weight: .semibold))
+
+                        Picker("Characters", selection: Binding(
+                            get: { AppSettings.shared.dialogThemeId },
+                            set: { AppSettings.shared.dialogThemeId = $0 }
+                        )) {
+                            ForEach(DialogTheme.all, id: \.id) { theme in
+                                Text("\(theme.char1) & \(theme.char2)").tag(theme.id)
+                            }
+                        }
+
+                        Text("TV characters that explain what's happening in your Claude Code session. Shows in the transcribe toast.")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+
+                        Divider()
+
                         // Ollama status
                         HStack(spacing: 8) {
                             Circle()

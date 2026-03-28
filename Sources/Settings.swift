@@ -49,6 +49,7 @@ final class AppSettings: @unchecked Sendable {
     private let enhanceKey = "enhance_provider"
     private let sttKey = "stt_provider"
     private let micKey = "selected_microphone_uid"
+    private let dialogThemeKey = "dialog_theme_id"
 
     var anthropicAPIKey: String {
         // 1. Environment variable
@@ -112,6 +113,15 @@ final class AppSettings: @unchecked Sendable {
         set {
             UserDefaults.standard.set(newValue ?? "", forKey: micKey)
             print("[Autoclaw] Microphone -> \(newValue ?? "system default")")
+        }
+    }
+
+    /// Which TV character pair provides the ELI5 session dialog
+    var dialogThemeId: String {
+        get { UserDefaults.standard.string(forKey: dialogThemeKey) ?? "gilfoyle-dinesh" }
+        set {
+            UserDefaults.standard.set(newValue, forKey: dialogThemeKey)
+            print("[Autoclaw] Dialog theme -> \(newValue)")
         }
     }
 

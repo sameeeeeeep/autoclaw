@@ -2,6 +2,49 @@ import Foundation
 import Combine
 import AppKit
 
+// MARK: - Dialog Line (ELI5 character exchange)
+
+struct DialogLine: Identifiable {
+    let id = UUID()
+    let character: String
+    let line: String
+}
+
+// MARK: - Dialog Theme (character pair for ELI5 banter)
+
+struct DialogTheme {
+    let id: String
+    let char1: String
+    let char2: String
+    let show: String
+    let style: String  // Brief personality guide for Haiku
+
+    static let all: [DialogTheme] = [
+        .init(id: "gilfoyle-dinesh", char1: "Gilfoyle", char2: "Dinesh", show: "Silicon Valley",
+              style: "Gilfoyle is deadpan/sardonic, Dinesh is defensive/animated. They roast each other while explaining code."),
+        .init(id: "david-moira", char1: "David", char2: "Moira", show: "Schitt's Creek",
+              style: "David is anxious/dramatic, Moira uses elaborate vocabulary and references her acting career. They overreact to mundane code changes."),
+        .init(id: "dwight-jim", char1: "Dwight", char2: "Jim", show: "The Office",
+              style: "Dwight is intense/literal ('FALSE.'), Jim is sarcastic and looks at the camera. Dwight relates everything to beet farming or survival skills."),
+        .init(id: "chandler-joey", char1: "Chandler", char2: "Joey", show: "Friends",
+              style: "Chandler uses 'Could this BE any more...' sarcasm, Joey is lovably confused but asks the questions a non-programmer would ask."),
+        .init(id: "rick-morty", char1: "Rick", char2: "Morty", show: "Rick and Morty",
+              style: "Rick is genius/dismissive with *burps*, Morty is anxious but grounds the explanation in simple terms."),
+        .init(id: "sherlock-watson", char1: "Sherlock", char2: "Watson", show: "Sherlock",
+              style: "Sherlock makes rapid deductions, Watson translates to plain English. 'Elementary' moments."),
+        .init(id: "jesse-walter", char1: "Jesse", char2: "Walter", show: "Breaking Bad",
+              style: "Jesse says 'Yeah science!' and uses slang, Walter is methodical/precise. They treat code like a cook."),
+        .init(id: "tony-jarvis", char1: "Tony", char2: "JARVIS", show: "Iron Man",
+              style: "Tony is quippy/confident, JARVIS is dry/precise with probability calculations."),
+    ]
+
+    static let `default` = all[0]
+
+    static func find(_ id: String) -> DialogTheme {
+        all.first { $0.id == id } ?? .default
+    }
+}
+
 // MARK: - Transcribe Service
 
 /// Orchestrates the voice-to-cursor pipeline:
@@ -19,7 +62,9 @@ final class TranscribeService: ObservableObject {
     @Published var isEnhancing = false
     /// Pre-prompt suggestion generated from project + session context before user speaks
     @Published var suggestedPrompts: [String] = []  // Two suggestions
+    @Published var sessionDialog: [DialogLine] = []  // ELI5 character exchange
     @Published var isGeneratingPrompt = false
+    var dialogTheme: DialogTheme = .default
 
     /// Legacy single suggestion accessor (first of two)
     var suggestedPrompt: String { suggestedPrompts.first ?? "" }
@@ -89,6 +134,7 @@ final class TranscribeService: ObservableObject {
         cleanText = ""
         enhancedText = ""
         suggestedPrompts = []
+        sessionDialog = []
         isEnhancing = false
         isGeneratingPrompt = false
         status = .idle
@@ -205,7 +251,7 @@ final class TranscribeService: ObservableObject {
         promptTask = Task { @MainActor in
             defer { isGeneratingPrompt = false }
 
-            let followUp = "User just dictated: \"\(String(text.prefix(500)))\". Reply ONLY as:\nA: <prediction>\nB: <prediction>\nGO:"
+            let followUp = "User just dictated: \"\(String(text.prefix(500)))\"\nReply with ONLY the JSON object (predictions + dialog), nothing else."
 
             do {
                 let result = try await callClaudeCLI(prompt: followUp, model: "haiku", sessionId: sessionId, resume: true)
@@ -265,7 +311,7 @@ final class TranscribeService: ObservableObject {
                 isGeneratingPrompt = true
                 defer { isGeneratingPrompt = false }
 
-                let followUp = "Session activity update:\n\(String(freshContext.suffix(800)))\n\nReply ONLY as:\nA: <prediction>\nB: <prediction>\nGO:"
+                let followUp = "Session activity update:\n\(String(freshContext.suffix(800)))\n\nReply with ONLY the JSON object (predictions + dialog), nothing else."
 
                 do {
                     let result = try await callClaudeCLI(prompt: followUp, model: "haiku", sessionId: sessionId, resume: true)
@@ -295,6 +341,9 @@ final class TranscribeService: ObservableObject {
     /// Uses a persistent Haiku session — context loaded once, predictions are lightweight follow-ups.
     /// Returns 2 suggestions so the user can pick the most relevant one.
     func generatePrePrompt() {
+        // Sync theme from settings
+        dialogTheme = DialogTheme.find(AppSettings.shared.dialogThemeId)
+
         // Need context to generate a suggestion
         guard !projectContext.isEmpty || !sessionContext.isEmpty else {
             DebugLog.log("[PrePrompt] SKIP — projectContext: \(projectContext.count) chars, sessionContext: \(sessionContext.count) chars")
@@ -328,21 +377,21 @@ final class TranscribeService: ObservableObject {
                     contextBlock += "Active app: \(activeApp)"
 
                     let primePrompt = """
-                    You are a parallel AI session that tracks what a developer is doing and predicts what they'll say next via voice-to-text.
+                    You are a parallel AI session that tracks what a developer is doing. You have two jobs:
+                    1. Predict what they'll say next via voice-to-text (2 predictions).
+                    2. Summarize what's happening as a 2-line exchange between \(dialogTheme.char1) and \(dialogTheme.char2) from \(dialogTheme.show). ELI5 — a non-programmer should understand. \(dialogTheme.style)
 
                     \(contextBlock)
 
                     PROJECT is what this project is about. SESSION is what the user has been doing right now.
-                    You will be asked repeatedly: "what will the user say next?"
+                    You will be asked repeatedly for predictions + dialog.
 
-                    Reply format (STRICTLY follow, no other text):
-                    A: <prediction 1, under 100 chars>
-                    B: <prediction 2, under 100 chars>
-
-                    Think about branching possibilities — did the last thing work or not? Continuing or pivoting?
-                    Focus on SESSION flow, not project backlog. Write as the user speaking to an AI assistant.
-
-                    GO:
+                    RULES:
+                    - Reply with ONLY a JSON object, nothing else. No markdown, no explanation.
+                    - Format: {"predictions":["<p1>","<p2>"],"dialog":[{"char":"\(dialogTheme.char1)","line":"..."},{"char":"\(dialogTheme.char2)","line":"..."}]}
+                    - Predictions: under 100 chars each. Think about branching (worked/didn't, continuing/pivoting). Write as the user speaking to an AI assistant.
+                    - Dialog: 1 line each, under 120 chars. Funny, in-character, about what's CURRENTLY happening in the session. Not generic banter — reference actual code/tasks from SESSION.
+                    - If SESSION is empty or unclear, dialog can be about the project in general.
                     """
 
                     DebugLog.log("[PrePrompt] Priming Haiku session \(sessionId)...")
@@ -356,7 +405,7 @@ final class TranscribeService: ObservableObject {
 
                 } else if let sessionId = haikuSessionId {
                     // Follow-up: just ask for next prediction (context already loaded)
-                    let followUp = "Active app: \(activeApp). Reply ONLY as:\nA: <prediction>\nB: <prediction>\nGO:"
+                    let followUp = "Active app: \(activeApp).\nReply with ONLY the JSON object (predictions + dialog), nothing else."
 
                     DebugLog.log("[PrePrompt] Resuming Haiku session \(sessionId)...")
                     let result = try await callClaudeCLI(prompt: followUp, model: "haiku", sessionId: sessionId, resume: true)
@@ -368,7 +417,7 @@ final class TranscribeService: ObservableObject {
         }
     }
 
-    /// Parse Haiku's response into 2 suggestions
+    /// Parse Haiku's response into predictions + dialog
     private func parsePrePromptResult(_ result: String) {
         let cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
@@ -378,43 +427,78 @@ final class TranscribeService: ObservableObject {
             return
         }
 
-        guard !cleaned.isEmpty && !cleaned.contains("\"type\":\"error\"") && !cleaned.hasPrefix("{") else {
+        guard !cleaned.isEmpty && !cleaned.contains("\"type\":\"error\"") else {
             DebugLog.log("[PrePrompt] Bad result: \"\(cleaned.prefix(100))\"")
             return
         }
 
-        // Extract A: and B: lines
-        var prompts: [String] = []
-        for line in cleaned.components(separatedBy: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            // Match "A: ..." or "B: ..." (the format we asked for)
-            if let range = trimmed.range(of: #"^[AB]:\s*"#, options: .regularExpression) {
-                var prediction = String(trimmed[range.upperBound...])
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-                    .replacingOccurrences(of: "**", with: "")
-                if !prediction.isEmpty && prediction.count > 5 {
-                    prompts.append(prediction)
-                }
-            }
-            if prompts.count >= 2 { break }
+        func cleanText(_ raw: String) -> String {
+            raw.replacingOccurrences(of: "**", with: "")
+                .replacingOccurrences(of: "*", with: "")
+                .replacingOccurrences(of: "`", with: "")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                .trimmingCharacters(in: .whitespaces)
         }
 
-        // Fallback: if Haiku didn't use A:/B: format, take first 2 non-empty lines that aren't headers
+        func isUsable(_ s: String) -> Bool {
+            !s.isEmpty && s.count > 5 && !s.hasSuffix(":") && !s.hasPrefix("GO")
+        }
+
+        var prompts: [String] = []
+        var dialog: [DialogLine] = []
+
+        // 1. Try JSON object parse: {"predictions":[...], "dialog":[...]}
+        if let start = cleaned.firstIndex(of: "{"), let end = cleaned.lastIndex(of: "}") {
+            let jsonStr = String(cleaned[start...end])
+            if let data = jsonStr.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                // Extract predictions
+                if let preds = obj["predictions"] as? [String] {
+                    prompts = preds.map { cleanText($0) }.filter { isUsable($0) }
+                    prompts = Array(prompts.prefix(2))
+                }
+                // Extract dialog
+                if let dialogArr = obj["dialog"] as? [[String: String]] {
+                    for d in dialogArr.prefix(2) {
+                        if let char = d["char"], let line = d["line"], !line.isEmpty {
+                            dialog.append(DialogLine(character: cleanText(char), line: cleanText(line)))
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Fallback: try JSON array (old format) for predictions only
+        if prompts.isEmpty, let start = cleaned.firstIndex(of: "["), let end = cleaned.lastIndex(of: "]") {
+            let jsonStr = String(cleaned[start...end])
+            if let data = jsonStr.data(using: .utf8),
+               let arr = try? JSONSerialization.jsonObject(with: data) as? [String] {
+                prompts = arr.map { cleanText($0) }.filter { isUsable($0) }
+                prompts = Array(prompts.prefix(2))
+            }
+        }
+
+        // 3. Last resort: extract A:/B: lines or first usable lines
+        if prompts.isEmpty {
+            for line in cleaned.components(separatedBy: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if let range = trimmed.range(of: #"^[AB]:\s*"#, options: .regularExpression) {
+                    let prediction = cleanText(String(trimmed[range.upperBound...]))
+                    if isUsable(prediction) { prompts.append(prediction) }
+                }
+                if prompts.count >= 2 { break }
+            }
+        }
         if prompts.isEmpty {
             let fallback = cleaned.components(separatedBy: "\n")
-                .map { $0.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "**", with: "") }
-                .map { line -> String in
-                    var l = line
-                    if let range = l.range(of: #"^[0-9]+[\.\)]\s*"#, options: .regularExpression) { l.removeSubrange(range) }
-                    if l.hasPrefix("- ") { l = String(l.dropFirst(2)) }
-                    return l.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-                }
-                .filter { !$0.isEmpty && $0.count > 5 && !$0.hasSuffix(":") }
+                .map { cleanText($0) }
+                .filter { isUsable($0) }
             prompts = Array(fallback.prefix(2))
         }
 
         suggestedPrompts = prompts
-        DebugLog.log("[PrePrompt] Parsed \(suggestedPrompts.count) suggestions: \(suggestedPrompts)")
+        sessionDialog = dialog
+        DebugLog.log("[PrePrompt] Parsed \(suggestedPrompts.count) predictions, \(sessionDialog.count) dialog lines")
     }
 
     // MARK: - Injection

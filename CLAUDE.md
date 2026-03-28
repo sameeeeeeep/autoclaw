@@ -1,8 +1,10 @@
 # Autoclaw — CLAUDE.md
 
 ## Current Focus (2026-03-29)
+- **ELI5 Dialog**: Same Haiku pre-prompt call now also returns a 2-line TV character exchange summarizing what's happening in the session. 8 theme pairs (Gilfoyle & Dinesh, David & Moira, Dwight & Jim, etc.) — configurable in Settings. One API call, two features.
+- **JSON pre-prompt format**: Haiku returns `{"predictions":[...], "dialog":[...]}` — structured JSON instead of A:/B: text format. Robust parser with JSON object → JSON array → A:/B: → raw line fallback chain.
 - **Persistent Haiku sessions**: Pre-prompt and enhance share a single persistent Haiku CLI session per project. Context loaded once on first call (`--session-id`), follow-ups use `--resume`. No redundant context reloading.
-- **Pre-prompt predictions**: 2 context-aware predictions shown as tappable cards with "Use" buttons. A:/B: structured format from Haiku. Considers branching possibilities (worked/didn't, continuing/pivoting). Auto-refreshes every 15s when session activity changes.
+- **Pre-prompt predictions**: 2 context-aware predictions shown as tappable cards with "Use" buttons. Auto-refreshes every 15s when session activity changes.
 - **Non-blocking pre-prompt**: Loading indicator is a subtle spinner on the Start button, not a blocking card. User can start transcribing immediately while predictions generate in background.
 - **Transcribe pipeline**: Raw WhisperKit output → inject immediately at cursor → enhance in background. Pre-stop + post-stop chunk drain prevents race condition loss.
 - **Project/session context**: Auto-detects project from window title, auto-selects most recent Claude Code session, reads JSONL conversation history. Context fallback chain: CLAUDE.md → README.md → Package.swift → package.json.
@@ -21,7 +23,7 @@ Mic → WhisperKit (local) → inject raw at cursor → Smart Enhance (Haiku/Son
 ```
 Persistent Haiku session per project: first call primes with CLAUDE.md + session context, follow-ups resume. Pre-prompt fires when toast opens — 2 predictions as tappable "Use" cards. Auto-refreshes as session progresses. Raw text injected immediately on stop. Enhanced version offered in background. Pre-prompt and enhance share the same Haiku session thread.
 
-**Status: FULLY BUILT** — WhisperKit STT (base.en, Neural Engine) → raw inject → smart enhance (Haiku/Sonnet/none). Persistent Haiku pre-prompt with A:/B: format, auto-refresh, feed-back loop. Apple SFSpeech as fallback STT.
+**Status: FULLY BUILT** — WhisperKit STT (base.en, Neural Engine) → raw inject → smart enhance (Haiku/Sonnet/none). Persistent Haiku pre-prompt with JSON format (predictions + ELI5 dialog), auto-refresh, feed-back loop. 8 dialog themes (TV character pairs). Apple SFSpeech as fallback STT.
 
 ### 2. Analyze (ambient detection)
 ```
@@ -107,7 +109,7 @@ When Qwen flags something in Analyze mode:
 
 ## Hotkey Flow
 - **Fn** (tap) → context-sensitive universal key
-- **Left Shift** (tap) → cycle through modes: Transcribe → Analyze → Task → Learn
+- **Right Shift** (tap) → cycle through modes: Transcribe → Analyze → Task → Learn
 - **Double-tap Left Option** → full dismiss (clean slate, end session, clear all state)
 - **Option+Z** → dismiss toast without ending session
 - **Option+X** → cycle request mode
@@ -123,7 +125,7 @@ When Qwen flags something in Analyze mode:
 - **TaskApprovalView** — confirm task suggestion before executing
 - **ExecutionView** — live output during execution
 - **WorkflowDetailView** — view individual saved workflows
-- **SettingsView** — model selection, API key entry, STT provider picker, cleanup provider picker, enhance provider picker, WhisperKit model status, Ollama health check, Chrome extension status, keyboard shortcuts, projects, data
+- **SettingsView** — model selection, API key entry, STT provider picker, cleanup provider picker, enhance provider picker, ELI5 dialog theme picker, WhisperKit model status, Ollama health check, Chrome extension status, keyboard shortcuts, projects, data
 
 ### Panel (MainPanelView) — FULLY BUILT
 - 4 tabs: Home, Workflows, Threads, Settings
@@ -137,6 +139,7 @@ When Qwen flags something in Analyze mode:
 Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card states, toast states, detail view, empty state, dark mode variants, and two architecture diagrams.
 
 ## What's FULLY BUILT
+- **ELI5 Dialog** in transcribe toast: 2-line TV character exchange (8 themes) summarizing session activity, piggybacked on same Haiku pre-prompt call
 - **Transcribe mode** end-to-end: WhisperKit STT → cleanup (Qwen/Haiku/none) → inject at cursor → smart enhance (Haiku/Sonnet/none)
 - **Analyze mode** pipeline: ContextBuffer → Qwen bouncer → template/MCP/Claude routing → FrictionToastView
 - **Task mode** end-to-end: clipboard → deduction → execution → result
@@ -172,8 +175,10 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 - Gate 2: "Execute these exact tools" (run) — with intent lock diff
 
 ## Key Decisions
+- ELI5 dialog piggybacked on pre-prompt: single Haiku call returns both predictions + character dialog, zero extra latency (2026-03-29)
+- 8 dialog themes matching SiliconValley Theater character pairs, configurable in Settings (2026-03-29)
+- Haiku returns JSON object `{"predictions":[...], "dialog":[...]}` — more reliable than A:/B: text format, parser has 4-level fallback chain (2026-03-29)
 - Persistent Haiku session per project: prime once with --session-id, resume with --resume, no context reloading (2026-03-29)
-- Pre-prompt uses A:/B: structured format — Haiku returns exactly 2 labeled predictions, parser extracts cleanly (2026-03-29)
 - Pre-prompt considers branching possibilities (worked/didn't, continuing/pivoting) but isn't locked into any framing (2026-03-29)
 - Pre-prompt is non-blocking: subtle spinner on Start button, user can transcribe immediately (2026-03-29)
 - Auto-refresh predictions every 15s when Claude Code session activity changes (hash-based dedup) (2026-03-29)
@@ -187,7 +192,7 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 - Qwen is just a bouncer, not a classifier — keep its prompt minimal (2026-03-24)
 - Haiku does all smart routing, matched against user's installed MCP tools (2026-03-24)
 - Event-driven triggering, not timer-based (don't waste CPU when idle) (2026-03-24)
-- Fn is the universal "do" key, Shift cycles modes, double-tap Option dismisses (2026-03-26)
+- Fn is the universal "do" key, Right Shift cycles modes, double-tap Option dismisses (2026-03-26)
 - WhisperKit (base.en) is the primary STT — Neural Engine, local, much better accuracy than Apple SFSpeech (2026-03-26)
 - autoclaw uses OAuth for Claude/Haiku, not API keys (2026-03-24)
 
