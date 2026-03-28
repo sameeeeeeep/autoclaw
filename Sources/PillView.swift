@@ -581,7 +581,7 @@ private struct EnabledGlow: View {
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             .strokeBorder(color.opacity(opacity), lineWidth: 1.5).blur(radius: 3).allowsHitTesting(false)
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius + 4, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .onAppear { withAnimation(.easeInOut(duration: 2.6).repeatForever(autoreverses: true)) { opacity = 0.40 } }
     }
 }
@@ -598,7 +598,7 @@ private struct ThinkingGlow: View {
             s.strokeBorder(g, lineWidth: 3).blur(radius: 2).animation(.easeInOut(duration: 1.15), value: stops)
             s.strokeBorder(g, lineWidth: 5).blur(radius: 4).animation(.easeInOut(duration: 1.45), value: stops)
         }.allowsHitTesting(false)
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius + 6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .task { while !Task.isCancelled { try? await Task.sleep(for: .seconds(0.75)); stops = Self.makeStops(color: color) } }
     }
     static func makeStops(color: Color) -> [Gradient.Stop] {

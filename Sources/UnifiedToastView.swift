@@ -29,8 +29,12 @@ struct UnifiedToastView: View {
             cardContent
         }
         .frame(width: 340)
-        .background(theme.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .modifier(LiquidGlassBackground(fallbackColor: theme.card))
+        .intelligenceGlow(
+            color: Theme.purple,
+            cornerRadius: 16,
+            state: appState.transcribeService.isGeneratingPrompt ? .thinking : .off
+        )
         .shadow(color: .black.opacity(colorScheme == .dark ? 0.4 : 0.08), radius: 24, y: 8)
     }
 
@@ -288,8 +292,8 @@ struct UnifiedToastView: View {
                         }
                     }
 
-                    // ELI5 dialog exchange (character banter about session)
-                    if !appState.transcribeService.sessionDialog.isEmpty {
+                    // ELI5 dialog exchange (character banter about session) — theater mode only
+                    if AppSettings.shared.theaterMode && !appState.transcribeService.sessionDialog.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(appState.transcribeService.sessionDialog) { line in
                                 HStack(alignment: .top, spacing: 6) {
@@ -319,14 +323,7 @@ struct UnifiedToastView: View {
                     ) {
                         appState.toggleTranscribe()
                     }
-                    .overlay(alignment: .trailing) {
-                        if appState.transcribeService.isGeneratingPrompt {
-                            ProgressView()
-                                .controlSize(.mini)
-                                .tint(Theme.purple)
-                                .padding(.trailing, 14)
-                        }
-                    }
+                    // Border glow on the toast itself signals loading — no spinner needed
                 }
 
             case .listening:
@@ -689,5 +686,23 @@ struct UnifiedToastView: View {
             appState.directExecuteMessage(text)
         }
         onDirectExecute()
+    }
+}
+
+// MARK: - Liquid Glass Background
+
+/// Applies macOS 26 liquid glass effect when available, falls back to solid background on older macOS.
+private struct LiquidGlassBackground: ViewModifier {
+    let fallbackColor: Color
+
+    func body(content: Content) -> some View {
+        if #available(macOS 26, *) {
+            content
+                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
+        } else {
+            content
+                .background(fallbackColor)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+        }
     }
 }

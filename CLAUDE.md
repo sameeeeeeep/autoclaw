@@ -1,13 +1,14 @@
 # Autoclaw — CLAUDE.md
 
 ## Current Focus (2026-03-29)
-- **ELI5 Dialog**: Same Haiku pre-prompt call now also returns a 2-line TV character exchange summarizing what's happening in the session. 8 theme pairs (Gilfoyle & Dinesh, David & Moira, Dwight & Jim, etc.) — configurable in Settings. One API call, two features.
-- **JSON pre-prompt format**: Haiku returns `{"predictions":[...], "dialog":[...]}` — structured JSON instead of A:/B: text format. Robust parser with JSON object → JSON array → A:/B: → raw line fallback chain.
+- **Theater Mode**: Optional toggle — ELI5 dialog generation + TTS voice playback via SiliconValley Theater sidecar. When enabled, 2-6 line multi-turn dialog with in-character term explainers. User messages referenced as a third character from the show (Richard for Silicon Valley, Johnny for Schitt's Creek, Michael for The Office, etc.). Sidecar install guidance shown in Settings when not detected.
+- **JSONL file watcher**: Replaced 15s polling with DispatchSource file watcher on Claude Code session JSONL. 4s debounce after writes settle. Zero CPU when idle, reactive within seconds of a completed response.
+- **Liquid glass UI**: macOS 26 Tahoe `.glassEffect()` on toast (with fallback for older macOS). Intelligence glow on toast border while Haiku is generating — replaces spinner.
+- **DialogVoiceService**: Calls SiliconValley Theater TTS sidecar (`/synthesize_dialogue` batch endpoint) to speak ELI5 dialog in character voices. Sequential WAV playback via AVAudioPlayer. Falls back to text-only if sidecar not running.
+- **Session-aware predictions**: Pre-prompt now reads full Claude Code conversation history (user messages + Claude responses). Predictions based on conversation flow — follow-ups, test requests, course corrections. Dialog references actual user requests via third-character framing.
+- **JSON pre-prompt format**: Haiku returns `{"predictions":[...], "dialog":[...]}` — structured JSON. Robust parser with JSON object → JSON array → A:/B: → raw line fallback chain.
 - **Persistent Haiku sessions**: Pre-prompt and enhance share a single persistent Haiku CLI session per project. Context loaded once on first call (`--session-id`), follow-ups use `--resume`. No redundant context reloading.
-- **Pre-prompt predictions**: 2 context-aware predictions shown as tappable cards with "Use" buttons. Auto-refreshes every 15s when session activity changes.
-- **Non-blocking pre-prompt**: Loading indicator is a subtle spinner on the Start button, not a blocking card. User can start transcribing immediately while predictions generate in background.
 - **Transcribe pipeline**: Raw WhisperKit output → inject immediately at cursor → enhance in background. Pre-stop + post-stop chunk drain prevents race condition loss.
-- **Project/session context**: Auto-detects project from window title, auto-selects most recent Claude Code session, reads JSONL conversation history. Context fallback chain: CLAUDE.md → README.md → Package.swift → package.json.
 - **Next**: OpenClaw/ClawHub lazy skill discovery, Haiku cloud routing for Analyze mode, polish + ship.
 
 ## What this is
@@ -23,7 +24,7 @@ Mic → WhisperKit (local) → inject raw at cursor → Smart Enhance (Haiku/Son
 ```
 Persistent Haiku session per project: first call primes with CLAUDE.md + session context, follow-ups resume. Pre-prompt fires when toast opens — 2 predictions as tappable "Use" cards. Auto-refreshes as session progresses. Raw text injected immediately on stop. Enhanced version offered in background. Pre-prompt and enhance share the same Haiku session thread.
 
-**Status: FULLY BUILT** — WhisperKit STT (base.en, Neural Engine) → raw inject → smart enhance (Haiku/Sonnet/none). Persistent Haiku pre-prompt with JSON format (predictions + ELI5 dialog), auto-refresh, feed-back loop. 8 dialog themes (TV character pairs). Apple SFSpeech as fallback STT.
+**Status: FULLY BUILT** — WhisperKit STT (base.en, Neural Engine) → raw inject → smart enhance (Haiku/Sonnet/none). Persistent Haiku pre-prompt with JSON format (predictions + multi-turn ELI5 dialog), event-driven JSONL file watcher refresh, feed-back loop. Theater mode with TTS voice playback via SiliconValley sidecar. 8 dialog themes (TV character pairs) with third-character user framing. Liquid glass UI on macOS 26. Apple SFSpeech as fallback STT.
 
 ### 2. Analyze (ambient detection)
 ```
@@ -139,7 +140,10 @@ When Qwen flags something in Analyze mode:
 Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card states, toast states, detail view, empty state, dark mode variants, and two architecture diagrams.
 
 ## What's FULLY BUILT
-- **ELI5 Dialog** in transcribe toast: 2-line TV character exchange (8 themes) summarizing session activity, piggybacked on same Haiku pre-prompt call
+- **Theater Mode** with ELI5 dialog: 2-6 line multi-turn TV character exchange (8 themes) with in-character term explainers, third-character user framing, TTS voice playback via SiliconValley sidecar
+- **DialogVoiceService**: TTS sidecar integration (`/synthesize_dialogue` batch endpoint), sequential WAV playback, graceful text-only fallback
+- **JSONL file watcher**: DispatchSource-based event-driven refresh (replaces 15s polling), 4s debounce
+- **Liquid glass UI**: macOS 26 `.glassEffect()` on toast with fallback, intelligence border glow while generating
 - **Transcribe mode** end-to-end: WhisperKit STT → cleanup (Qwen/Haiku/none) → inject at cursor → smart enhance (Haiku/Sonnet/none)
 - **Analyze mode** pipeline: ContextBuffer → Qwen bouncer → template/MCP/Claude routing → FrictionToastView
 - **Task mode** end-to-end: clipboard → deduction → execution → result
@@ -175,13 +179,19 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 - Gate 2: "Execute these exact tools" (run) — with intent lock diff
 
 ## Key Decisions
+- Theater mode as optional toggle: ELI5 dialog + TTS are opt-in, sidecar not bundled — users install SiliconValley Theater separately if they want voices (2026-03-29)
+- JSONL file watcher replaces 15s poll: DispatchSource on session file + 4s debounce — zero CPU when idle, reactive on writes (2026-03-29)
+- Liquid glass (.glassEffect) on macOS 26 with solid background fallback for older macOS (2026-03-29)
+- Intelligence glow on toast border replaces spinner — `.thinking` state pulses while Haiku generates (2026-03-29)
+- Multi-turn dialog (2-6 lines) with in-character term explainers, scaled to session activity (2026-03-29)
+- Third-character framing: user messages referenced as show character (Richard, Johnny, Michael, etc.) — dialog stays between 2 main characters only (2026-03-29)
+- DialogVoiceService calls SiliconValley TTS sidecar batch endpoint — graceful text-only fallback if sidecar not running (2026-03-29)
+- Predictions now factor full conversation history (user + Claude messages), not just project context (2026-03-29)
 - ELI5 dialog piggybacked on pre-prompt: single Haiku call returns both predictions + character dialog, zero extra latency (2026-03-29)
 - 8 dialog themes matching SiliconValley Theater character pairs, configurable in Settings (2026-03-29)
 - Haiku returns JSON object `{"predictions":[...], "dialog":[...]}` — more reliable than A:/B: text format, parser has 4-level fallback chain (2026-03-29)
 - Persistent Haiku session per project: prime once with --session-id, resume with --resume, no context reloading (2026-03-29)
-- Pre-prompt considers branching possibilities (worked/didn't, continuing/pivoting) but isn't locked into any framing (2026-03-29)
-- Pre-prompt is non-blocking: subtle spinner on Start button, user can transcribe immediately (2026-03-29)
-- Auto-refresh predictions every 15s when Claude Code session activity changes (hash-based dedup) (2026-03-29)
+- Pre-prompt is non-blocking: border glow on toast, user can transcribe immediately (2026-03-29)
 - Feed-back loop: after transcription, tell Haiku what user said, get fresh predictions (2026-03-29)
 - Transcribe pipeline: skip cleanup, inject raw immediately, enhance in background (2026-03-28)
 - Pre-prompt fires BEFORE user speaks — uses project CLAUDE.md + active Claude Code session JSONL (2026-03-28)
@@ -204,9 +214,9 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 ## Tech Stack
 Swift 6.3 + SwiftUI, SPM (Package.swift), WhisperKit (base.en, Core ML), NSStatusItem pill, toast cards, NSPanel side panel, SQLite/GRDB, launchd, SKILL.md OpenClaw registry, macOS 14+, Ollama (Qwen 2.5 3B)
 
-## File Inventory (49 files)
+## File Inventory (50 files)
 **Core:** App.swift, AppDelegate.swift, AppState.swift
-**Voice:** VoiceService.swift, WhisperKitService.swift, TranscribeService.swift, CursorInjector.swift
+**Voice:** VoiceService.swift, WhisperKitService.swift, TranscribeService.swift, CursorInjector.swift, DialogVoiceService.swift
 **Analyze:** AnalyzePipeline.swift, ContextBuffer.swift, FrictionDetector.swift, WorkflowMatcher.swift
 **Sensors:** ActiveWindowService.swift, ClipboardMonitor.swift, ScreenOCR.swift, BrowserBridge.swift, KeyFrameAnalyzer.swift, ScreenCaptureStream.swift, FileActivityMonitor.swift
 **MCP:** CapabilityMap.swift, CapabilityDiscovery.swift

@@ -49,13 +49,15 @@ The primary feature. Speak anywhere, raw text appears at your cursor immediately
 Mic → WhisperKit (local, Neural Engine) → inject raw at cursor → Smart Enhance (background, non-blocking)
 ```
 
-**Pre-prompt predictions:** When the toast opens, a persistent Haiku session reads your project context (CLAUDE.md, README) and active Claude Code session history, then predicts the two most likely things you'll say next. Predictions auto-refresh as the session progresses. Tap a suggestion to inject it directly.
+**Pre-prompt predictions:** When the toast opens, a persistent Haiku session reads your project context (CLAUDE.md, README) and active Claude Code session history, then predicts the two most likely things you'll say next. Predictions auto-refresh via JSONL file watcher — event-driven, not polled. Tap a suggestion to inject it directly.
 
-**ELI5 Dialog:** The same Haiku call also generates a 2-line TV character exchange explaining what's happening in your session. Choose from 8 character pairs: Gilfoyle & Dinesh (Silicon Valley), David & Moira (Schitt's Creek), Dwight & Jim (The Office), Chandler & Joey (Friends), Rick & Morty, Sherlock & Watson, Jesse & Walter (Breaking Bad), or Tony & JARVIS (Iron Man). Zero extra latency — piggybacked on the prediction call.
+**Theater Mode** (optional): TV characters explain what's happening in your session — ELI5 style with in-character term explainers. 2-6 lines of dialog depending on session activity. Your messages are referenced as a third character from the show (Richard in Silicon Valley, Michael in The Office, etc.). With the [SiliconValley Theater](https://github.com/sameeeeeeep/siliconvalley) TTS sidecar installed, dialog is spoken aloud in character voices. Without it, dialog shows as text only. Choose from 8 character pairs: Gilfoyle & Dinesh, David & Moira, Dwight & Jim, Chandler & Joey, Rick & Morty, Sherlock & Watson, Jesse & Walter, or Tony & JARVIS.
 
 **Smart Enhance** (post-injection, non-blocking) — context-aware rewrite using the same Haiku session. Proactively adds specific details from project/session context. Configurable: Haiku / Sonnet / none.
 
 **STT Engine:** WhisperKit (base.en, Neural Engine, local) with Apple SFSpeech as fallback. Background chunk transcription every ~25s with hallucination filtering and pre-stop/post-stop drain to prevent chunk loss.
+
+**UI:** Liquid glass effect on macOS 26 Tahoe (solid background fallback on older macOS). Intelligence border glow while Haiku generates predictions.
 
 ### Analyze Mode — "I'll watch, you work"
 
@@ -147,6 +149,7 @@ make dmg        # create distributable DMG
 | | |
 |---|---|
 | **Ollama + Qwen 2.5 3B** | `ollama pull qwen2.5:3b` — local bouncer for Analyze mode + transcript cleanup |
+| **SiliconValley TTS sidecar** | Theater mode voice playback — `cd SiliconValley/TTSSidecar && python3 server.py` (port 7893) |
 | **Chrome extension** | Load unpacked from `ChromeExtension/` for richer Learn mode |
 | **Screen Recording** | Screen capture for key frame analysis + enhance context |
 
@@ -202,7 +205,8 @@ All configurable in the app's Settings tab:
 
 - **STT Engine:** WhisperKit (default) or Apple Speech
 - **Smart Enhance:** Haiku (default) / Sonnet / None
-- **ELI5 Dialog Theme:** 8 TV character pairs for session commentary
+- **Theater Mode:** Toggle ELI5 dialog generation + TTS voice playback
+- **Dialog Theme:** 8 TV character pairs for session commentary
 - **Projects:** Multiple project directories with context, auto-detected from active window
 - **Ollama:** Health check, model status
 

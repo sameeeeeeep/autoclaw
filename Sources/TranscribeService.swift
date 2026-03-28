@@ -16,26 +16,45 @@ struct DialogTheme {
     let id: String
     let char1: String
     let char2: String
+    let boss: String   // Third character — the user's avatar who gives them work
     let show: String
     let style: String  // Brief personality guide for Haiku
+    let voice1: String // TTS sidecar voice ID for char1
+    let voice2: String // TTS sidecar voice ID for char2
 
     static let all: [DialogTheme] = [
-        .init(id: "gilfoyle-dinesh", char1: "Gilfoyle", char2: "Dinesh", show: "Silicon Valley",
-              style: "Gilfoyle is deadpan/sardonic, Dinesh is defensive/animated. They roast each other while explaining code."),
-        .init(id: "david-moira", char1: "David", char2: "Moira", show: "Schitt's Creek",
-              style: "David is anxious/dramatic, Moira uses elaborate vocabulary and references her acting career. They overreact to mundane code changes."),
-        .init(id: "dwight-jim", char1: "Dwight", char2: "Jim", show: "The Office",
-              style: "Dwight is intense/literal ('FALSE.'), Jim is sarcastic and looks at the camera. Dwight relates everything to beet farming or survival skills."),
-        .init(id: "chandler-joey", char1: "Chandler", char2: "Joey", show: "Friends",
-              style: "Chandler uses 'Could this BE any more...' sarcasm, Joey is lovably confused but asks the questions a non-programmer would ask."),
-        .init(id: "rick-morty", char1: "Rick", char2: "Morty", show: "Rick and Morty",
-              style: "Rick is genius/dismissive with *burps*, Morty is anxious but grounds the explanation in simple terms."),
-        .init(id: "sherlock-watson", char1: "Sherlock", char2: "Watson", show: "Sherlock",
-              style: "Sherlock makes rapid deductions, Watson translates to plain English. 'Elementary' moments."),
-        .init(id: "jesse-walter", char1: "Jesse", char2: "Walter", show: "Breaking Bad",
-              style: "Jesse says 'Yeah science!' and uses slang, Walter is methodical/precise. They treat code like a cook."),
-        .init(id: "tony-jarvis", char1: "Tony", char2: "JARVIS", show: "Iron Man",
-              style: "Tony is quippy/confident, JARVIS is dry/precise with probability calculations."),
+        .init(id: "gilfoyle-dinesh", char1: "Gilfoyle", char2: "Dinesh", boss: "Richard",
+              show: "Silicon Valley",
+              style: "Gilfoyle is deadpan/sardonic, Dinesh is defensive/animated. They roast each other while explaining code.",
+              voice1: "gilfoyle", voice2: "dinesh"),
+        .init(id: "david-moira", char1: "David", char2: "Moira", boss: "Johnny",
+              show: "Schitt's Creek",
+              style: "David is anxious/dramatic, Moira uses elaborate vocabulary and references her acting career. They overreact to mundane code changes.",
+              voice1: "david-rose", voice2: "moira-rose"),
+        .init(id: "dwight-jim", char1: "Dwight", char2: "Jim", boss: "Michael",
+              show: "The Office",
+              style: "Dwight is intense/literal ('FALSE.'), Jim is sarcastic and looks at the camera. Dwight relates everything to beet farming or survival skills.",
+              voice1: "dwight", voice2: "jim"),
+        .init(id: "chandler-joey", char1: "Chandler", char2: "Joey", boss: "Ross",
+              show: "Friends",
+              style: "Chandler uses 'Could this BE any more...' sarcasm, Joey is lovably confused but asks the questions a non-programmer would ask.",
+              voice1: "chandler", voice2: "joey"),
+        .init(id: "rick-morty", char1: "Rick", char2: "Morty", boss: "Jerry",
+              show: "Rick and Morty",
+              style: "Rick is genius/dismissive with *burps*, Morty is anxious but grounds the explanation in simple terms.",
+              voice1: "rick", voice2: "morty"),
+        .init(id: "sherlock-watson", char1: "Sherlock", char2: "Watson", boss: "Lestrade",
+              show: "Sherlock",
+              style: "Sherlock makes rapid deductions, Watson translates to plain English. 'Elementary' moments.",
+              voice1: "sherlock", voice2: "watson"),
+        .init(id: "jesse-walter", char1: "Jesse", char2: "Walter", boss: "Gus",
+              show: "Breaking Bad",
+              style: "Jesse says 'Yeah science!' and uses slang, Walter is methodical/precise. They treat code like a cook.",
+              voice1: "jesse", voice2: "walter"),
+        .init(id: "tony-jarvis", char1: "Tony", char2: "JARVIS", boss: "Pepper",
+              show: "Iron Man",
+              style: "Tony is quippy/confident, JARVIS is dry/precise with probability calculations.",
+              voice1: "tony", voice2: "jarvis"),
     ]
 
     static let `default` = all[0]
@@ -71,6 +90,7 @@ final class TranscribeService: ObservableObject {
 
     private let voiceService: VoiceService
     private let ollamaService: OllamaService
+    let dialogVoice = DialogVoiceService()
 
     /// The app user was in when they started transcribing
     var activeApp: String = ""
@@ -90,8 +110,13 @@ final class TranscribeService: ObservableObject {
     private var haikuSessionId: String?
     /// Whether the Haiku session has been primed with project+session context
     private var haikuSessionPrimed = false
-    /// Auto-refresh loop that watches for new session activity
-    private var autoRefreshTask: Task<Void, Never>?
+    /// File watcher for JSONL session changes (replaces polling)
+    private var jsonlWatchSource: DispatchSourceFileSystemObject?
+    private var jsonlFileDescriptor: Int32 = -1
+    /// Debounce task — waits for writes to settle before firing Haiku
+    private var debounceTask: Task<Void, Never>?
+    /// In-flight refresh task — NOT cancelled by debounce resets
+    private var refreshTask: Task<Void, Never>?
     /// Callback to get latest session context (set by AppState)
     var sessionContextProvider: (() -> String)?
     /// Last session context hash — only refresh when it changes
@@ -287,46 +312,109 @@ final class TranscribeService: ObservableObject {
         }
     }
 
-    // MARK: - Auto-Refresh Loop
+    // MARK: - JSONL File Watcher (event-driven refresh)
 
-    /// Start watching for new session activity — refreshes predictions when the Claude Code session changes
-    func startAutoRefresh() {
+    /// Start watching a JSONL session file for changes — refreshes predictions when Claude Code writes new turns.
+    /// Uses DispatchSource file watcher + 4s debounce (Claude streams multiple writes per response).
+    func startAutoRefresh(watchingFile jsonlPath: String? = nil) {
         stopAutoRefresh()
-        autoRefreshTask = Task { @MainActor in
-            while !Task.isCancelled {
-                // Check every 15 seconds for new session activity
-                try? await Task.sleep(nanoseconds: 15_000_000_000)
-                guard !Task.isCancelled else { break }
-                guard haikuSessionPrimed, let sessionId = haikuSessionId else { continue }
 
-                // Get fresh session context and check if it changed
-                guard let provider = sessionContextProvider else { continue }
-                let freshContext = provider()
-                let freshHash = freshContext.hashValue
-                guard freshHash != lastSessionContextHash, !freshContext.isEmpty else { continue }
-                lastSessionContextHash = freshHash
+        guard let path = jsonlPath, !path.isEmpty else {
+            DebugLog.log("[PrePrompt] No JSONL path to watch, skipping file watcher")
+            return
+        }
 
-                // Session changed — tell Haiku and get new predictions
-                DebugLog.log("[PrePrompt] Session activity changed, refreshing predictions...")
-                isGeneratingPrompt = true
-                defer { isGeneratingPrompt = false }
+        let fd = open(path, O_EVTONLY)
+        guard fd >= 0 else {
+            DebugLog.log("[PrePrompt] Could not open JSONL for watching: \(path)")
+            return
+        }
+        jsonlFileDescriptor = fd
 
-                let followUp = "Session activity update:\n\(String(freshContext.suffix(800)))\n\nReply with ONLY the JSON object (predictions + dialog), nothing else."
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .extend],
+            queue: .main
+        )
 
-                do {
-                    let result = try await callClaudeCLI(prompt: followUp, model: "haiku", sessionId: sessionId, resume: true)
-                    parsePrePromptResult(result)
-                } catch {
-                    DebugLog.log("[PrePrompt] Auto-refresh failed: \(error)")
-                }
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                self.debouncedRefresh()
+            }
+        }
+
+        source.setCancelHandler { [weak self] in
+            guard let self else { return }
+            if self.jsonlFileDescriptor >= 0 {
+                close(self.jsonlFileDescriptor)
+                self.jsonlFileDescriptor = -1
+            }
+        }
+
+        source.resume()
+        jsonlWatchSource = source
+        DebugLog.log("[PrePrompt] Watching JSONL for changes: \(path)")
+    }
+
+    /// Debounce JSONL write events — wait 5s after last write before firing Haiku.
+    /// Claude Code streams responses, so a single assistant turn produces many rapid writes.
+    /// Only resets the debounce timer — does NOT cancel any in-flight Haiku call.
+    @MainActor
+    private func debouncedRefresh() {
+        // Only reset the debounce timer, never cancel a running refresh
+        debounceTask?.cancel()
+        debounceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)  // 5s debounce
+            guard !Task.isCancelled else { return }
+
+            // Don't stack refreshes — if one is already in flight, skip
+            guard refreshTask == nil else {
+                DebugLog.log("[PrePrompt] Refresh already in flight, skipping")
+                return
+            }
+
+            refreshTask = Task { @MainActor in
+                await self.refreshFromSessionChange()
+                self.refreshTask = nil
             }
         }
     }
 
-    /// Stop the auto-refresh loop
+    /// Called after debounce settles — check if session context actually changed, then tell Haiku.
+    @MainActor
+    private func refreshFromSessionChange() async {
+        guard haikuSessionPrimed, let sessionId = haikuSessionId else { return }
+        guard let provider = sessionContextProvider else { return }
+
+        let freshContext = provider()
+        let freshHash = freshContext.hashValue
+        guard freshHash != lastSessionContextHash, !freshContext.isEmpty else { return }
+        lastSessionContextHash = freshHash
+
+        DebugLog.log("[PrePrompt] JSONL changed, refreshing predictions...")
+        isGeneratingPrompt = true
+        defer { isGeneratingPrompt = false }
+
+        let followUp = "Session activity update:\n\(String(freshContext.suffix(800)))\n\nReply with ONLY the JSON object\(AppSettings.shared.theaterMode ? " (predictions + dialog)" : ""), nothing else."
+
+        do {
+            let result = try await callClaudeCLI(prompt: followUp, model: "haiku", sessionId: sessionId, resume: true)
+            parsePrePromptResult(result)
+            DebugLog.log("[PrePrompt] Refresh completed successfully")
+        } catch {
+            DebugLog.log("[PrePrompt] Refresh failed: \(error)")
+        }
+    }
+
+    /// Stop watching the JSONL file
     func stopAutoRefresh() {
-        autoRefreshTask?.cancel()
-        autoRefreshTask = nil
+        debounceTask?.cancel()
+        debounceTask = nil
+        refreshTask?.cancel()
+        refreshTask = nil
+        jsonlWatchSource?.cancel()
+        jsonlWatchSource = nil
     }
 
     // MARK: - Pre-Prompt Generation
@@ -376,22 +464,44 @@ final class TranscribeService: ObservableObject {
                     }
                     contextBlock += "Active app: \(activeApp)"
 
+                    let theaterOn = AppSettings.shared.theaterMode
+                    let dialogInstructions: String
+                    if theaterOn {
+                        dialogInstructions = """
+                        2. Write a SHORT COHERENT CONVERSATION between \(dialogTheme.char1) and \(dialogTheme.char2) from \(dialogTheme.show) about what's happening in SESSION. \(dialogTheme.style)
+                           - This is a FLOWING DIALOG — each line responds to the previous one. One character brings up what happened, the other reacts, they dig in, explain terms to each other, and reach a conclusion. NOT a list of disconnected observations.
+                           - Dialog is ONLY between \(dialogTheme.char1) and \(dialogTheme.char2). When referencing the user, call them "\(dialogTheme.boss)" (from \(dialogTheme.show)).
+                           - ELI5: a non-programmer overhearing this conversation should understand what's going on and learn something.
+                           - When a technical term comes up, one character explains it naturally in-character. The other reacts. e.g. "A DispatchSource — it's basically a file stalker." / "So... it watches files? Like my ex watches my Instagram?"
+                           - 4-6 lines for a full exchange. Build a narrative arc: setup → explanation → reaction → punchline or insight.
+                        """
+                    } else {
+                        dialogInstructions = "2. Skip dialog — omit the \"dialog\" field entirely."
+                    }
+
+                    let dialogFormat = theaterOn
+                        ? "\"dialog\":[{\"char\":\"\(dialogTheme.char1)\",\"line\":\"...\"},{\"char\":\"\(dialogTheme.char2)\",\"line\":\"...\"},...]"
+                        : ""
+                    let formatExample = theaterOn
+                        ? "{\"predictions\":[\"<p1>\",\"<p2>\"],\(dialogFormat)}"
+                        : "{\"predictions\":[\"<p1>\",\"<p2>\"]}"
+
                     let primePrompt = """
                     You are a parallel AI session that tracks what a developer is doing. You have two jobs:
-                    1. Predict what they'll say next via voice-to-text (2 predictions).
-                    2. Summarize what's happening as a 2-line exchange between \(dialogTheme.char1) and \(dialogTheme.char2) from \(dialogTheme.show). ELI5 — a non-programmer should understand. \(dialogTheme.style)
+                    1. Recommend the 2 best next actions for the user based on SESSION context. These are things the user could say to their AI assistant as voice commands. Examples: "run the tests and fix any failures", "rebuild and reopen the app", "check if the API response format changed". Be specific to what's happening — not generic advice.
+                    \(dialogInstructions)
 
                     \(contextBlock)
 
-                    PROJECT is what this project is about. SESSION is what the user has been doing right now.
-                    You will be asked repeatedly for predictions + dialog.
+                    PROJECT is what this project is about. SESSION is the live conversation between the user and Claude — user messages, Claude's responses, tool calls, everything happening right now.
+                    You will be asked repeatedly for updated recommendations\(theaterOn ? " + dialog" : "").
 
                     RULES:
                     - Reply with ONLY a JSON object, nothing else. No markdown, no explanation.
-                    - Format: {"predictions":["<p1>","<p2>"],"dialog":[{"char":"\(dialogTheme.char1)","line":"..."},{"char":"\(dialogTheme.char2)","line":"..."}]}
-                    - Predictions: under 100 chars each. Think about branching (worked/didn't, continuing/pivoting). Write as the user speaking to an AI assistant.
-                    - Dialog: 1 line each, under 120 chars. Funny, in-character, about what's CURRENTLY happening in the session. Not generic banter — reference actual code/tasks from SESSION.
-                    - If SESSION is empty or unclear, dialog can be about the project in general.
+                    - Format: \(formatExample)
+                    - Predictions: under 100 chars each. Actionable next steps the user could voice-command. Think: what's unfinished? what should be tested? what's the natural next move? Write as imperative commands the user would speak.
+                    \(theaterOn ? "- Dialog: a COHERENT back-and-forth conversation (not random disconnected observations). \(dialogTheme.char1) and \(dialogTheme.char2) discuss what just happened, building on each other's lines. One explains, the other reacts, they go deeper. Weave term explanations naturally into the flow. Refer to the user as \(dialogTheme.boss). Each line under 120 chars." : "")
+                    - If SESSION is empty or unclear, \(theaterOn ? "dialog can be about the project in general." : "base recommendations on PROJECT context.")
                     """
 
                     DebugLog.log("[PrePrompt] Priming Haiku session \(sessionId)...")
@@ -457,9 +567,9 @@ final class TranscribeService: ObservableObject {
                     prompts = preds.map { cleanText($0) }.filter { isUsable($0) }
                     prompts = Array(prompts.prefix(2))
                 }
-                // Extract dialog
+                // Extract dialog (2-6 lines depending on session activity)
                 if let dialogArr = obj["dialog"] as? [[String: String]] {
-                    for d in dialogArr.prefix(2) {
+                    for d in dialogArr.prefix(6) {
                         if let char = d["char"], let line = d["line"], !line.isEmpty {
                             dialog.append(DialogLine(character: cleanText(char), line: cleanText(line)))
                         }
@@ -499,6 +609,11 @@ final class TranscribeService: ObservableObject {
         suggestedPrompts = prompts
         sessionDialog = dialog
         DebugLog.log("[PrePrompt] Parsed \(suggestedPrompts.count) predictions, \(sessionDialog.count) dialog lines")
+
+        // Speak dialog lines aloud via TTS sidecar if theater mode is on (non-blocking)
+        if !dialog.isEmpty && AppSettings.shared.theaterMode {
+            dialogVoice.speak(dialog, theme: dialogTheme)
+        }
     }
 
     // MARK: - Injection

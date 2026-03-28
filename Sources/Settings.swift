@@ -50,6 +50,7 @@ final class AppSettings: @unchecked Sendable {
     private let sttKey = "stt_provider"
     private let micKey = "selected_microphone_uid"
     private let dialogThemeKey = "dialog_theme_id"
+    private let theaterModeKey = "theater_mode_enabled"
 
     var anthropicAPIKey: String {
         // 1. Environment variable
@@ -113,6 +114,16 @@ final class AppSettings: @unchecked Sendable {
         set {
             UserDefaults.standard.set(newValue ?? "", forKey: micKey)
             print("[Autoclaw] Microphone -> \(newValue ?? "system default")")
+        }
+    }
+
+    /// Whether Theater mode is enabled (ELI5 dialog generation + TTS voice playback).
+    /// Requires SiliconValley TTS sidecar for voice — text-only if sidecar not running.
+    var theaterMode: Bool {
+        get { UserDefaults.standard.bool(forKey: theaterModeKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: theaterModeKey)
+            print("[Autoclaw] Theater mode -> \(newValue)")
         }
     }
 

@@ -5,6 +5,7 @@ struct SettingsView: View {
     @State private var apiKey = ""
     @State private var showingFolderPicker = false
     @State private var keyVisible = false
+    @State private var sidecarStatus: String?  // nil = unchecked, "ok" = running, "missing" = not found
 
     var body: some View {
         ScrollView {
@@ -198,22 +199,52 @@ struct SettingsView: View {
 
                         Divider()
 
-                        // ELI5 Dialog Theme
-                        Text("ELI5 Dialog")
+                        // Theater Mode
+                        Text("Theater Mode")
                             .font(.system(size: 12, weight: .semibold))
 
-                        Picker("Characters", selection: Binding(
-                            get: { AppSettings.shared.dialogThemeId },
-                            set: { AppSettings.shared.dialogThemeId = $0 }
-                        )) {
-                            ForEach(DialogTheme.all, id: \.id) { theme in
-                                Text("\(theme.char1) & \(theme.char2)").tag(theme.id)
+                        Toggle("Enable Theater", isOn: Binding(
+                            get: { AppSettings.shared.theaterMode },
+                            set: { newValue in
+                                AppSettings.shared.theaterMode = newValue
+                                if newValue { checkSidecar() }
                             }
-                        }
+                        ))
+                        .toggleStyle(.switch)
 
-                        Text("TV characters that explain what's happening in your Claude Code session. Shows in the transcribe toast.")
+                        Text("TV characters explain what's happening in your session — ELI5 style, with term explainers woven into the conversation.")
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
+
+                        if AppSettings.shared.theaterMode {
+                            Picker("Characters", selection: Binding(
+                                get: { AppSettings.shared.dialogThemeId },
+                                set: { AppSettings.shared.dialogThemeId = $0 }
+                            )) {
+                                ForEach(DialogTheme.all, id: \.id) { theme in
+                                    Text("\(theme.char1) & \(theme.char2)").tag(theme.id)
+                                }
+                            }
+
+                            // Sidecar status for voice playback
+                            if let status = sidecarStatus {
+                                if status == "ok" {
+                                    Label("TTS sidecar connected — voices enabled", systemImage: "checkmark.circle.fill")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.green)
+                                } else {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Label("TTS sidecar not running — text-only mode", systemImage: "exclamationmark.triangle.fill")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(.orange)
+                                        Text("For voice playback, install the SiliconValley Theater TTS sidecar:\ncd ~/Documents/Claude\\ Code/SiliconValley/TTSSidecar && python3 server.py")
+                                            .font(.system(size: 9, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                            .textSelection(.enabled)
+                                    }
+                                }
+                            }
+                        }
 
                         Divider()
 
@@ -377,6 +408,13 @@ struct SettingsView: View {
         }
         .onAppear {
             apiKey = AppSettings.shared.anthropicAPIKey
+        }
+    }
+
+    private func checkSidecar() {
+        Task {
+            let reachable = await appState.transcribeService.dialogVoice.checkSidecar()
+            sidecarStatus = reachable ? "ok" : "missing"
         }
     }
 

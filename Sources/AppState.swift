@@ -401,8 +401,8 @@ final class AppState: ObservableObject {
         }
         DebugLog.log("[PrePrompt] firePrePromptIfNeeded — project: \(selectedProject?.name ?? "nil"), ctx: \(transcribeService.projectContext.count), session: \(transcribeService.sessionContext.count)")
         transcribeService.generatePrePrompt()
-        // Start auto-refresh loop — watches for new session activity while toast is open
-        transcribeService.startAutoRefresh()
+        // Watch the active JSONL file for changes — event-driven, not polled
+        transcribeService.startAutoRefresh(watchingFile: selectedClaudeSession?.filePath)
     }
 
     /// Switch to a project and refresh all context (CLAUDE.md, sessions, pre-prompt)
@@ -491,7 +491,9 @@ final class AppState: ObservableObject {
             return
         }
 
-        let encoded = project.path.replacingOccurrences(of: "/", with: "-")
+        let encoded = project.path
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: " ", with: "-")
         let projectDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects/\(encoded)")
 
