@@ -141,3 +141,8 @@ final class AppSettings: @unchecked Sendable {
         raw.components(separatedBy: .whitespacesAndNewlines).joined()
     }
 }
+
+extension Notification.Name {
+    static let theaterModeToggled = Notification.Name("theaterModeToggled")
+    static let boardToggled = Notification.Name("boardToggled")
+}

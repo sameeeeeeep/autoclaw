@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Legacy friction window kept for backward compat — unified toast handles both now
     private var frictionToastWindow: ToastWindow!
     private var theaterPIPWindow: TheaterPIPWindow!
+    private var boardPIPWindow: BoardPIPWindow!
     private var hotkeyMonitor: GlobalHotkeyMonitor!
     private var cancellables = Set<AnyCancellable>()
 
@@ -115,6 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         projectPickerWindow = ToastWindow()
         frictionToastWindow = ToastWindow()  // legacy, kept for friction-only display
         theaterPIPWindow = TheaterPIPWindow()
+        boardPIPWindow = BoardPIPWindow()
     }
 
     private func setupHotkey() {
@@ -207,9 +209,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 s.voiceService.whisperKitService.forceReset()
                 s.voiceService.isListening = false
                 s.isTranscribing = false
-                // Dismiss toast + theater PIP and clear all state
+                // Dismiss toast + theater PIP + board PIP and clear all state
                 self?.toastWindow.dismiss()
                 self?.theaterPIPWindow.dismiss()
+                self?.boardPIPWindow.dismiss()
                 s.showThread = false
                 s.lastEndedThread = nil
                 s.threadMessages = []
@@ -397,6 +400,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 if !active {
                     self.theaterPIPWindow.dismiss()
+                    self.appState.transcribeService.dialogVoice.stopFillerLoop()
+                    self.appState.transcribeService.dialogVoice.stop()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Theater mode toggled from toast
+        NotificationCenter.default.publisher(for: .theaterModeToggled)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if AppSettings.shared.theaterMode {
+                    self.showTheaterPIP()
+                } else {
+                    self.theaterPIPWindow.dismiss()
+                    self.appState.transcribeService.dialogVoice.stopFillerLoop()
+                    self.appState.transcribeService.dialogVoice.stop()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Board toggle
+        NotificationCenter.default.publisher(for: .boardToggled)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if self.boardPIPWindow.isShowing {
+                    self.boardPIPWindow.dismiss()
+                } else {
+                    self.showBoardPIP()
                 }
             }
             .store(in: &cancellables)
@@ -464,13 +497,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Auto-launch TTS sidecar if not running
         appState.transcribeService.dialogVoice.launchSidecarIfNeeded()
 
+        let theme = DialogTheme.find(AppSettings.shared.dialogThemeId)
+        let projectPath = appState.selectedProject?.path
+
+        // Load filler + cold open content
+        if let projectPath {
+            appState.transcribeService.dialogVoice.loadContent(from: projectPath, theme: theme)
+        }
+
+        // Play cold open immediately (from cache if available)
+        if let projectPath {
+            _ = appState.transcribeService.dialogVoice.playColdOpen(theme: theme, projectPath: projectPath)
+        }
+
+        // Start filler loop for idle periods
+        appState.transcribeService.dialogVoice.startFillerLoop(theme: theme, projectPath: projectPath)
+
         let view = TheaterPIPView(
             transcribeService: appState.transcribeService,
             onDismiss: { [weak self] in
                 self?.theaterPIPWindow.dismiss()
+                self?.appState.transcribeService.dialogVoice.stopFillerLoop()
             }
         )
         theaterPIPWindow.show(with: view)
+    }
+
+    private func showBoardPIP() {
+        guard let projectPath = appState.selectedProject?.path else { return }
+        let view = BoardPIPView(
+            projectPath: projectPath,
+            onUse: { [weak self] text in
+                self?.appState.transcribeService.injectText(text)
+            },
+            onDismiss: { [weak self] in
+                self?.boardPIPWindow.dismiss()
+            }
+        )
+        boardPIPWindow.show(with: view)
     }
 
     private func showFrictionToast() {

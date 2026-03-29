@@ -16,6 +16,12 @@ enum CursorInjector {
     static func type(_ text: String) async {
         await MainActor.run { isInjecting = true }
 
+        // Verify we have accessibility access
+        let trusted = AXIsProcessTrusted()
+        if !trusted {
+            print("[CursorInjector] WARNING: App is NOT trusted for accessibility. CGEvent posting will fail silently.")
+        }
+
         let pasteboard = NSPasteboard.general
 
         // Set our text to clipboard
@@ -23,7 +29,7 @@ enum CursorInjector {
         pasteboard.setString(text, forType: .string)
 
         // Delay to let pasteboard sync AND target app regain focus
-        try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
+        try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
 
         // Simulate Cmd+V
         simulatePaste()
@@ -60,27 +66,40 @@ enum CursorInjector {
 
     // MARK: - Private
 
+    /// Create an event source for synthetic keyboard events.
+    /// Using an explicit source (vs nil) is more reliable across app boundaries.
+    private static func makeSource() -> CGEventSource? {
+        CGEventSource(stateID: .combinedSessionState)
+    }
+
     private static func simulateSelectAll() {
+        let source = makeSource()
         let aKeyCode: CGKeyCode = 0x00 // 'a' key
-        guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: aKeyCode, keyDown: true) else { return }
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: aKeyCode, keyDown: true) else {
+            print("[CursorInjector] Failed to create Cmd+A keyDown event")
+            return
+        }
         keyDown.flags = .maskCommand
         keyDown.post(tap: .cghidEventTap)
-        guard let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: aKeyCode, keyDown: false) else { return }
+        guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: aKeyCode, keyDown: false) else { return }
         keyUp.flags = .maskCommand
         keyUp.post(tap: .cghidEventTap)
     }
 
     private static func simulatePaste() {
-        // Create Cmd+V key event
+        let source = makeSource()
         let vKeyCode: CGKeyCode = 0x09 // 'v' key
 
         // Key down with Cmd modifier
-        guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: vKeyCode, keyDown: true) else { return }
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true) else {
+            print("[CursorInjector] Failed to create Cmd+V keyDown event — accessibility permission missing?")
+            return
+        }
         keyDown.flags = .maskCommand
         keyDown.post(tap: .cghidEventTap)
 
         // Key up with Cmd modifier
-        guard let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: vKeyCode, keyDown: false) else { return }
+        guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false) else { return }
         keyUp.flags = .maskCommand
         keyUp.post(tap: .cghidEventTap)
     }

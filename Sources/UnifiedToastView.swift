@@ -20,6 +20,7 @@ struct UnifiedToastView: View {
 
     @State private var inputText = ""
     @FocusState private var inputFocused: Bool
+    @State private var addedToBoard: String?  // flash feedback
 
     @Environment(\.colorScheme) private var colorScheme
     private var theme: Theme { Theme(colorScheme: colorScheme) }
@@ -261,19 +262,29 @@ struct UnifiedToastView: View {
                     if !appState.transcribeService.suggestedPrompts.isEmpty {
                         VStack(spacing: 6) {
                             ForEach(Array(appState.transcribeService.suggestedPrompts.enumerated()), id: \.offset) { idx, suggestion in
-                                Button(action: { appState.transcribeService.injectPrePrompt(at: idx) }) {
-                                    HStack(spacing: 8) {
-                                        Image(systemName: "sparkle")
-                                            .font(.system(size: 10))
-                                            .foregroundStyle(Theme.purple)
-                                            .padding(.top, 2)
-                                        Text(suggestion)
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundStyle(theme.textPrimary)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                            .lineLimit(nil)
-                                            .multilineTextAlignment(.leading)
-                                        Spacer()
+                                HStack(spacing: 8) {
+                                    Image(systemName: "sparkle")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(Theme.purple)
+                                        .padding(.top, 2)
+                                    Text(suggestion)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(theme.textPrimary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .lineLimit(nil)
+                                        .multilineTextAlignment(.leading)
+                                    Spacer()
+                                    Button(action: { addToBoard(suggestion) }) {
+                                        Text("Add")
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .foregroundStyle(Theme.teal)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(Theme.teal.opacity(0.15))
+                                            .clipShape(Capsule())
+                                    }
+                                    .buttonStyle(.plain)
+                                    Button(action: { appState.transcribeService.injectPrePrompt(at: idx) }) {
                                         Text("Use")
                                             .font(.system(size: 10, weight: .semibold))
                                             .foregroundStyle(Theme.purple)
@@ -282,17 +293,15 @@ struct UnifiedToastView: View {
                                             .background(Theme.purple.opacity(0.15))
                                             .clipShape(Capsule())
                                     }
-                                    .padding(10)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(Theme.purple.opacity(colorScheme == .dark ? 0.08 : 0.05))
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Theme.purple.opacity(colorScheme == .dark ? 0.08 : 0.05))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
                             }
                         }
                     }
-
-                    // ELI5 dialog now shown in Theater PIP window (TheaterPIPView)
 
                     // Start button — always visible, with subtle loading hint if pre-prompt is generating
                     actionButton(
@@ -356,11 +365,27 @@ struct UnifiedToastView: View {
 
             case .done:
                 // What was injected
-                resultCard(
-                    text: appState.transcribeCleanText.isEmpty ? "Done" : appState.transcribeCleanText,
-                    color: Theme.green,
-                    icon: "checkmark.circle.fill"
-                )
+                HStack(alignment: .top, spacing: 0) {
+                    resultCard(
+                        text: appState.transcribeCleanText.isEmpty ? "Done" : appState.transcribeCleanText,
+                        color: Theme.green,
+                        icon: "checkmark.circle.fill"
+                    )
+                    if !appState.transcribeCleanText.isEmpty {
+                        Button(action: { addToBoard(appState.transcribeCleanText) }) {
+                            Image(systemName: addedToBoard == appState.transcribeCleanText ? "checkmark" : "plus")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Theme.teal)
+                                .frame(width: 24, height: 24)
+                                .background(Theme.teal.opacity(0.12))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Add to board")
+                        .padding(.top, 8)
+                        .padding(.trailing, 4)
+                    }
+                }
 
                 // Smart enhancement from Haiku
                 if appState.transcribeService.isEnhancing {
@@ -373,26 +398,40 @@ struct UnifiedToastView: View {
                             .foregroundStyle(Theme.purple)
                     }
                 } else if !appState.transcribeService.enhancedText.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Theme.purple)
-                            Text("Enhanced version")
+                    HStack(alignment: .top, spacing: 0) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Theme.purple)
+                                Text("Enhanced version")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Theme.purple)
+                            }
+
+                            Text(appState.transcribeService.enhancedText)
+                                .font(.system(size: 12))
+                                .foregroundStyle(theme.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .lineLimit(8)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.purple.opacity(colorScheme == .dark ? 0.1 : 0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                        Button(action: { addToBoard(appState.transcribeService.enhancedText) }) {
+                            Image(systemName: addedToBoard == appState.transcribeService.enhancedText ? "checkmark" : "plus")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(Theme.purple)
+                                .frame(width: 24, height: 24)
+                                .background(Theme.purple.opacity(0.12))
+                                .clipShape(Circle())
                         }
-
-                        Text(appState.transcribeService.enhancedText)
-                            .font(.system(size: 12))
-                            .foregroundStyle(theme.textPrimary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .lineLimit(8)
+                        .buttonStyle(.plain)
+                        .help("Add to board")
+                        .padding(.top, 12)
                     }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.purple.opacity(colorScheme == .dark ? 0.1 : 0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
 
                     actionButton(title: "Use Enhanced", icon: "sparkles", color: Theme.purple) {
                         Task {
@@ -505,6 +544,30 @@ struct UnifiedToastView: View {
             .menuStyle(.borderlessButton)
 
             Spacer()
+
+            // Theater + Board toggles — only in Transcribe mode
+            if appState.requestMode == .transcribe {
+                Button(action: {
+                    AppSettings.shared.theaterMode.toggle()
+                    NotificationCenter.default.post(name: .theaterModeToggled, object: nil)
+                }) {
+                    Image(systemName: AppSettings.shared.theaterMode ? "theatermasks.fill" : "theatermasks")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AppSettings.shared.theaterMode ? Theme.teal : theme.textMuted)
+                }
+                .buttonStyle(.plain)
+                .help("Toggle Theater mode")
+
+                Button(action: {
+                    NotificationCenter.default.post(name: .boardToggled, object: nil)
+                }) {
+                    Image(systemName: "list.bullet.clipboard")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.textMuted)
+                }
+                .buttonStyle(.plain)
+                .help("Toggle Board")
+            }
 
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
@@ -665,6 +728,68 @@ struct UnifiedToastView: View {
             appState.directExecuteMessage(text)
         }
         onDirectExecute()
+    }
+
+    // MARK: - Board
+
+    private func addToBoard(_ item: String) {
+        guard let path = appState.selectedProject?.path else { return }
+        let boardPath = "\(path)/.autoclaw/board.md"
+
+        // Read current board
+        guard var content = try? String(contentsOfFile: boardPath, encoding: .utf8) else { return }
+
+        // Append to Todo section
+        if let todoRange = content.range(of: "## Todo") {
+            let insertPoint = content.index(todoRange.upperBound, offsetBy: 0)
+            content.insert(contentsOf: "\n- \(item)", at: insertPoint)
+        } else {
+            content += "\n## Todo\n- \(item)\n"
+        }
+
+        try? content.write(toFile: boardPath, atomically: true, encoding: .utf8)
+
+        // Flash feedback
+        withAnimation(.easeOut(duration: 0.2)) { addedToBoard = item }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation { addedToBoard = nil }
+        }
+    }
+}
+
+// MARK: - Board Model
+
+struct BoardItems {
+    var todo: [String] = []
+    var inProgress: [String] = []
+    var done: [String] = []
+
+    static func parse(_ content: String) -> BoardItems {
+        var items = BoardItems()
+        var currentSection = ""
+
+        for line in content.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.lowercased().hasPrefix("## todo") {
+                currentSection = "todo"
+            } else if trimmed.lowercased().hasPrefix("## in progress") {
+                currentSection = "inprogress"
+            } else if trimmed.lowercased().hasPrefix("## done") {
+                currentSection = "done"
+            } else if trimmed.hasPrefix("- ") {
+                let item = String(trimmed.dropFirst(2))
+                    .replacingOccurrences(of: "[ ] ", with: "")
+                    .replacingOccurrences(of: "[x] ", with: "")
+                guard !item.isEmpty else { continue }
+                switch currentSection {
+                case "todo": items.todo.append(item)
+                case "inprogress": items.inProgress.append(item)
+                case "done": items.done.append(item)
+                default: break
+                }
+            }
+        }
+        return items
     }
 }
 

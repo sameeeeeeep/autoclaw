@@ -211,6 +211,9 @@ final class TranscribeService: ObservableObject {
     var projectContext: String = ""
     /// Session context (recent thread messages) — set by AppState before start
     var sessionContext: String = ""
+    /// File paths for agentic context — Haiku reads these directly instead of pre-loaded text
+    var projectPath: String?       // e.g. /Users/.../Autoclaw
+    var sessionJSONLPath: String?  // e.g. /Users/.../.claude/projects/.../abc.jsonl
 
     /// Raw transcribed chunks accumulated during background processing
     private var rawChunks: [String] = []
@@ -245,6 +248,69 @@ final class TranscribeService: ObservableObject {
 
     /// How often to transcribe a chunk (seconds)
     private let chunkInterval: Float = 25.0
+
+    /// Extract the sections of CLAUDE.md that help predict next actions.
+    /// Prioritizes: gaps/next > build priority > current focus (truncated).
+    static func extractActionableContext(_ fullContext: String) -> String {
+        let lines = fullContext.components(separatedBy: "\n")
+
+        // Extract named sections
+        var sectionMap: [String: [String]] = [:]
+        var currentKey = ""
+        let wantedKeys = ["focus", "not built", "gaps", "priority", "next"]
+
+        for line in lines {
+            let lower = line.lowercased().trimmingCharacters(in: .whitespaces)
+            if lower.hasPrefix("#") {
+                let matched = wantedKeys.first(where: { lower.contains($0) })
+                currentKey = matched ?? ""
+            } else if !currentKey.isEmpty {
+                sectionMap[currentKey, default: []].append(line)
+            }
+        }
+
+        // Build output: gaps/priority first (most actionable), then abbreviated focus
+        var parts: [String] = []
+
+        // 1. What's NOT built / remaining gaps — most important for prediction
+        for key in ["not built", "gaps"] {
+            if let lines = sectionMap[key], !lines.isEmpty {
+                let text = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty { parts.append("GAPS:\n\(String(text.prefix(500)))") }
+            }
+        }
+
+        // 2. Build priority / next
+        for key in ["priority", "next"] {
+            if let lines = sectionMap[key], !lines.isEmpty {
+                let text = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty { parts.append("NEXT:\n\(String(text.prefix(300)))") }
+            }
+        }
+
+        // 3. Current focus — abbreviated (just the first line of each bullet)
+        if let focusLines = sectionMap["focus"], !focusLines.isEmpty {
+            let bullets = focusLines
+                .filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("- **") }
+                .map { line -> String in
+                    // Extract just "- **Name**: first sentence"
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    if let colonRange = trimmed.range(of: "**:") ?? trimmed.range(of: "**: ") {
+                        let afterColon = trimmed[colonRange.upperBound...].trimmingCharacters(in: .whitespaces)
+                        let firstSentence = afterColon.components(separatedBy: ". ").first ?? String(afterColon.prefix(80))
+                        let name = trimmed[trimmed.startIndex..<colonRange.lowerBound]
+                        return "\(name)**: \(firstSentence)"
+                    }
+                    return String(trimmed.prefix(100))
+                }
+            if !bullets.isEmpty {
+                parts.append("ACTIVE:\n\(bullets.joined(separator: "\n"))")
+            }
+        }
+
+        let result = parts.joined(separator: "\n\n")
+        return result.isEmpty ? String(fullContext.prefix(1000)) : String(result.prefix(1500))
+    }
 
     init(voiceService: VoiceService, ollamaService: OllamaService) {
         self.voiceService = voiceService
@@ -578,12 +644,27 @@ final class TranscribeService: ObservableObject {
     /// Called after debounce settles — check if session context actually changed, then tell Haiku.
     @MainActor
     private func refreshFromSessionChange() async {
-        guard haikuSessionPrimed, let sessionId = haikuSessionId else { return }
-        guard let provider = sessionContextProvider else { return }
+        guard haikuSessionPrimed, let sessionId = haikuSessionId else {
+            DebugLog.log("[PrePrompt] Refresh skipped — primed: \(haikuSessionPrimed), sessionId: \(haikuSessionId ?? "nil")")
+            return
+        }
+        guard let provider = sessionContextProvider else {
+            DebugLog.log("[PrePrompt] Refresh skipped — no sessionContextProvider")
+            return
+        }
 
         let freshContext = provider()
         let freshHash = freshContext.hashValue
-        guard freshHash != lastSessionContextHash, !freshContext.isEmpty else { return }
+        guard !freshContext.isEmpty else {
+            DebugLog.log("[PrePrompt] Refresh skipped — empty context")
+            return
+        }
+        // Allow refresh if context changed OR enough time has passed (covers streaming where parsed content looks the same)
+        let timeSinceRefresh = lastRefreshTime.map { Date().timeIntervalSince($0) } ?? 999
+        if freshHash == lastSessionContextHash && timeSinceRefresh < 30 {
+            DebugLog.log("[PrePrompt] Refresh skipped — context unchanged, only \(Int(timeSinceRefresh))s since last refresh")
+            return
+        }
         lastSessionContextHash = freshHash
 
         let tempo = estimateTempo()
@@ -599,7 +680,7 @@ final class TranscribeService: ObservableObject {
         extractCompletedItems(from: freshContext)
 
         let dialogHint = AppSettings.shared.theaterMode
-            ? " (predictions + dialog). Dialog: exactly \(tempo.dialogTurns) lines — session is \(tempo.rawValue), keep it tight."
+            ? " (predictions + dialog). Dialog: exactly \(tempo.dialogTurns) lines about the SPECIFIC thing in the latest messages below. Name the file/function/feature."
             : ""
 
         // Carry forward previous predictions so model can course-correct
@@ -626,7 +707,13 @@ final class TranscribeService: ObservableObject {
             ? ""
             : "Were previous predictions close? If yes, predict the NEXT step after what just happened.\nIf no, re-read the activity and predict fresh.\n\n"
 
-        let followUp = "\(prevPredictions)What happened since:\n\(String(freshContext.suffix(1200)))\n\(completedBlock)\(courseCorrect)Reply with ONLY the JSON object\(dialogHint), nothing else."
+        let followUp = """
+        \(prevPredictions)\(completedBlock)\
+        Session update — re-read the last ~100 lines of the JSONL to see what changed.
+        Update the board (move completed items to Done, add new Todo items you think should happen).
+        \(courseCorrect)\
+        Then reply with ONLY the JSON object\(dialogHint) — predictions for what's NEXT.
+        """
 
         do {
             let result = try await callClaudeCLI(prompt: followUp, model: "haiku", sessionId: sessionId, resume: true)
@@ -682,49 +769,108 @@ final class TranscribeService: ObservableObject {
         // Sync theme from settings
         dialogTheme = DialogTheme.find(AppSettings.shared.dialogThemeId)
 
-        // Need context to generate a suggestion
-        guard !projectContext.isEmpty || !sessionContext.isEmpty else {
-            DebugLog.log("[PrePrompt] SKIP — projectContext: \(projectContext.count) chars, sessionContext: \(sessionContext.count) chars")
+        // Need context to generate a suggestion — either file paths or inline text
+        guard projectPath != nil || sessionJSONLPath != nil || !projectContext.isEmpty || !sessionContext.isEmpty else {
+            DebugLog.log("[PrePrompt] SKIP — no context available")
             return
         }
 
-        promptTask?.cancel()
+        // Prevent triple-prime: if a prime is already in flight, skip
+        if promptTask != nil {
+            DebugLog.log("[PrePrompt] SKIP — already in flight (session: \(haikuSessionId ?? "new"))")
+            return
+        }
+
         suggestedPrompts = []
         isGeneratingPrompt = true
-        DebugLog.log("[PrePrompt] STARTED — project: \(projectContext.count) chars, session: \(sessionContext.count) chars, app: \(activeApp), haiku session: \(haikuSessionId ?? "new")")
+        DebugLog.log("[PrePrompt] STARTED — project: \(projectPath ?? "nil"), jsonl: \(sessionJSONLPath?.suffix(40) ?? "nil"), app: \(activeApp), haiku session: \(haikuSessionId ?? "new")")
 
         promptTask = Task { @MainActor in
             defer {
                 isGeneratingPrompt = false
+                promptTask = nil  // Allow future generatePrePrompt() calls
                 DebugLog.log("[PrePrompt] DONE — \(suggestedPrompts.count) suggestions")
             }
 
             do {
+                // Ensure .autoclaw/ briefing folder exists
+                if let projPath = projectPath {
+                    let autoclawDir = "\(projPath)/.autoclaw"
+                    let contextFile = "\(autoclawDir)/context.md"
+                    let fm = FileManager.default
+                    if !fm.fileExists(atPath: autoclawDir) {
+                        try? fm.createDirectory(atPath: autoclawDir, withIntermediateDirectories: true)
+                    }
+                    if !fm.fileExists(atPath: contextFile) {
+                        // Seed from CLAUDE.md if available, otherwise create a starter
+                        let claudeMD = "\(projPath)/CLAUDE.md"
+                        let readme = "\(projPath)/README.md"
+                        if let content = try? String(contentsOfFile: claudeMD, encoding: .utf8) {
+                            let brief = Self.extractActionableContext(content)
+                            try? brief.write(toFile: contextFile, atomically: true, encoding: .utf8)
+                            DebugLog.log("[PrePrompt] Seeded .autoclaw/context.md from CLAUDE.md (\(brief.count) chars)")
+                        } else if let content = try? String(contentsOfFile: readme, encoding: .utf8) {
+                            let brief = String(content.prefix(2000))
+                            try? brief.write(toFile: contextFile, atomically: true, encoding: .utf8)
+                            DebugLog.log("[PrePrompt] Seeded .autoclaw/context.md from README.md")
+                        } else {
+                            let starter = "# Project Context\n\nAdd project goals, priorities, and product context here.\nThis file is read by Autoclaw's PM agent to make predictions."
+                            try? starter.write(toFile: contextFile, atomically: true, encoding: .utf8)
+                            DebugLog.log("[PrePrompt] Created starter .autoclaw/context.md")
+                        }
+                    }
+                    // Seed board.md if missing
+                    let boardFile = "\(autoclawDir)/board.md"
+                    if !fm.fileExists(atPath: boardFile) {
+                        let board = """
+                        # Board
+
+                        ## Todo
+
+                        ## In Progress
+
+                        ## Done
+                        """
+                        try? board.write(toFile: boardFile, atomically: true, encoding: .utf8)
+                        DebugLog.log("[PrePrompt] Created .autoclaw/board.md")
+                    }
+                }
+
                 // First call: prime the session with full context
                 if !haikuSessionPrimed {
                     let sessionId = UUID().uuidString
                     haikuSessionId = sessionId
 
-                    var contextBlock = ""
-                    if !projectContext.isEmpty {
-                        contextBlock += "PROJECT:\n\(projectContext)\n\n"
+                    // Build the PM's briefing — file paths only, Haiku reads what it needs
+                    let autoclawDir = projectPath.map { "\($0)/.autoclaw" }
+                    let contextFile = autoclawDir.map { "\($0)/context.md" }
+
+                    let boardFile = autoclawDir.map { "\($0)/board.md" }
+
+                    var filesBlock = ""
+                    if let ctx = contextFile {
+                        filesBlock += "PROJECT BRIEF (read first — product context):\n\(ctx)\n\n"
                     }
-                    if !sessionContext.isEmpty {
-                        contextBlock += "SESSION:\n\(sessionContext)\n\n"
+                    if let jsonl = sessionJSONLPath {
+                        filesBlock += "SESSION JSONL (live conversation — read last ~200 lines for current activity):\n\(jsonl)\n\n"
                     }
-                    contextBlock += "Active app: \(activeApp)"
+                    if let board = boardFile {
+                        filesBlock += "BOARD (your kanban — read it, update it each round):\n\(board)\n\n"
+                    }
+                    if let dir = autoclawDir {
+                        filesBlock += "DOCS FOLDER (any extra docs + where you write):\n\(dir)/\n"
+                    }
 
                     let theaterOn = AppSettings.shared.theaterMode
                     let dialogInstructions: String
                     if theaterOn {
                         let initialTurns = estimateTempo().dialogTurns
                     dialogInstructions = """
-                        2. Write a SHORT COHERENT CONVERSATION between \(dialogTheme.char1) and \(dialogTheme.char2) from \(dialogTheme.show) about what's happening in SESSION. \(dialogTheme.style)
-                           - This is a FLOWING DIALOG — each line responds to the previous one. One character brings up what happened, the other reacts, they dig in, explain terms to each other, and reach a conclusion. NOT a list of disconnected observations.
-                           - Dialog is ONLY between \(dialogTheme.char1) and \(dialogTheme.char2). When referencing the user, call them "\(dialogTheme.boss)" (from \(dialogTheme.show)).
-                           - ELI5: a non-programmer overhearing this conversation should understand what's going on and learn something.
-                           - When a technical term comes up, one character explains it naturally in-character. The other reacts. e.g. "A DispatchSource — it's basically a file stalker." / "So... it watches files? Like my ex watches my Instagram?"
-                           - Exactly \(initialTurns) lines for this exchange. I'll tell you how many lines to write each time based on session pace — follow it precisely. Build a narrative arc within the given line count.
+                        2. Write a \(initialTurns)-line dialog between \(dialogTheme.char1) and \(dialogTheme.char2) (\(dialogTheme.show)) about what's happening in the session.
+                           - FLOWING conversation: each line responds to the previous. ELI5 — explain technical terms via show-universe analogies.
+                           - Reference the user as "\(dialogTheme.boss)".
+                           - Dialog must be about the LATEST session activity. Name the specific file/function/feature.
+                           - Exactly \(initialTurns) lines. Each under 120 chars.
                         """
                     } else {
                         dialogInstructions = "2. Skip dialog — omit the \"dialog\" field entirely."
@@ -740,49 +886,49 @@ final class TranscribeService: ObservableObject {
                     let personalityGuide = theaterOn ? "\n\(dialogTheme.personality)" : ""
 
                     let primePrompt = """
-                    You are a session observer for a developer using Claude Code. You produce two outputs:
-                    1. TWO predictions of what the user will tell Claude to do next
+                    You are a product manager running in parallel to a developer's Claude Code session.
+                    You watch the session, maintain a project board, and predict what gets built next.
+
+                    === EVERY ROUND, YOU DO THREE THINGS ===
+
+                    1. UPDATE THE BOARD — read board.md, then rewrite it:
+                       - Move completed items (things done in the session) to ## Done
+                       - Move the current focus to ## In Progress
+                       - Add new tasks to ## Todo that you think should happen next (from product perspective)
+                       - Keep items concise (one line each). Cap at 8 todo, 3 in-progress, 15 done.
+                       - Write the updated board back to the board.md file.
+
+                    2. RETURN TWO PREDICTIONS — the next things the user will tell Claude to build
                     \(dialogInstructions)
                     \(personalityGuide)
 
-                    === HOW TO PREDICT ===
+                    === YOUR ROLE ===
 
-                    Read the SESSION below. Identify:
-                    - LAST COMPLETED: What just finished? (look for "done", successful tool calls, files written)
-                    - CURRENT STATE: Is something mid-flight? (look for errors, partial implementations, TODOs mentioned)
-                    - NATURAL NEXT: Given what just completed, what's the logical next step?
+                    You're a PM, not a code reviewer. Think product: what ships next, what connects to what, what gaps remain.
+                    Everything in the session is DONE. Predict what HASN'T happened yet.
+                    You can also add tasks to the board that the user hasn't mentioned — things a good PM would flag.
 
-                    Decision tree:
-                    1. If something BROKE → predict the fix (not "debug" — the specific fix: "handle the nil crash in SessionThread.swift when entries array is empty")
-                    2. If something just SHIPPED → predict wiring it in (not "test it" — the integration: "connect the new ClipboardMonitor output to the session thread view")
-                    3. If a feature is partially built → predict the missing piece (not "finish it" — the specific part: "add the fallback case for when no MCP server matches the detected friction")
-                    4. If a milestone just completed → predict the next feature in the dependency chain
+                    Predictions:
+                    - Start with a verb (add, wire, fix, implement, connect)
+                    - Reference actual features/files from the session or project brief
+                    - Under 100 chars, actionable by Claude
 
-                    Each prediction:
-                    - Starts with an imperative verb (add, wire, refactor, fix, implement, move, connect, extract, split, replace)
-                    - References ACTUAL names from the session: files, functions, variables, types, UI elements
-                    - Is specific enough that Claude Code could execute it without follow-up questions
-                    - Under 100 chars
+                    === YOUR FILES ===
 
-                    ANTI-PATTERNS (never predict these):
-                    - Testing/verification: "test the app", "verify it works", "run the build", "check if X works"
-                    - Questions: "does X work?", "is Y correct?", "what about Z?"
-                    - Vague commands: "clean up the code", "improve performance", "fix the bugs"
-                    - Meta-commentary: "continue working on X", "keep going with Y"
+                    You can ONLY access files in the .autoclaw/ folder and the session JSONL. No direct codebase access.
+                    Read project brief first, then session JSONL, then board.
 
-                    === CONTEXT ===
+                    \(filesBlock)
 
-                    \(contextBlock)
-
-                    You will be asked repeatedly for updated recommendations\(theaterOn ? " + dialog" : "").
+                    You will be called repeatedly as the session progresses. Update the board each time.
 
                     === OUTPUT ===
 
-                    - Reply with ONLY a JSON object, nothing else. No markdown, no explanation, no wrapping.
-                    - Format: \(formatExample)
-                    - Predictions: exactly 2, under 100 chars each.
-                    \(theaterOn ? "- Dialog: a COHERENT back-and-forth conversation. \(dialogTheme.char1) and \(dialogTheme.char2) discuss what just happened, building on each other's lines. STAY IN CHARACTER — use the voice guide above for tone, catchphrases, and analogies. Map technical concepts to the show's universe. Refer to the user as \(dialogTheme.boss). Each line under 120 chars. IMPORTANT: I will specify the exact number of dialog lines each time — follow it precisely. The count is based on session pace so the dialog finishes before the next update arrives." : "")
-                    - If SESSION is empty or unclear, \(theaterOn ? "dialog can be about the project in general." : "base recommendations on PROJECT context.")
+                    FIRST: Update the board (write to board.md).
+                    THEN: Reply with ONLY a JSON object. No markdown, no explanation.
+                    Format: \(formatExample)
+                    Predictions: exactly 2, under 100 chars each.
+                    \(theaterOn ? "Dialog: reference the specific thing from the latest session activity. Stay in character. Each line under 120 chars." : "")
                     """
 
                     DebugLog.log("[PrePrompt] Priming Haiku session \(sessionId)...")
@@ -897,6 +1043,8 @@ final class TranscribeService: ObservableObject {
         }
 
         suggestedPrompts = prompts
+        // Track where new lines will start in the sessionDialog array (for TTS bubble sync)
+        let newLinesBaseIndex = sessionDialog.count
         // Append new dialog lines — don't replace, so current TTS playback isn't disrupted
         sessionDialog.append(contentsOf: dialog)
         DebugLog.log("[PrePrompt] Parsed \(suggestedPrompts.count) predictions, \(sessionDialog.count) dialog lines (appended \(dialog.count))")
@@ -909,7 +1057,7 @@ final class TranscribeService: ObservableObject {
 
         // Speak dialog lines aloud via TTS sidecar if theater mode is on (non-blocking)
         if !dialog.isEmpty && AppSettings.shared.theaterMode {
-            dialogVoice.speak(dialog, theme: dialogTheme)
+            dialogVoice.speak(dialog, theme: dialogTheme, baseIndex: newLinesBaseIndex)
         }
     }
 
@@ -924,6 +1072,15 @@ final class TranscribeService: ObservableObject {
         Task { @MainActor in
             await CursorInjector.type(text)
             print("[Transcribe] Injected pre-prompt: \(text.prefix(60))...")
+        }
+    }
+
+    /// Inject arbitrary text at cursor (used by board widget)
+    func injectText(_ text: String) {
+        guard !text.isEmpty else { return }
+        Task { @MainActor in
+            await CursorInjector.type(text)
+            print("[Transcribe] Injected board item: \(text.prefix(60))...")
         }
     }
 
@@ -1000,15 +1157,21 @@ final class TranscribeService: ObservableObject {
             - Keep their voice — if they're casual, stay casual \
             Tone: \(appContext). Active app: \(app).
             \(contextBlock)
-            Return ONLY the enhanced text, nothing else.
+            Return ONLY the enhanced text, nothing else. Do NOT wrap your response in quotes.
 
-            "\(text)"
+            ---
+            \(text)
+            ---
             """
         }
 
         do {
             let result = try await callClaudeCLI(prompt: prompt, model: provider.modelFlag)
-            let cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
+            var cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Strip surrounding quotes — LLM sometimes wraps its response in them
+            if cleaned.count >= 2 && cleaned.hasPrefix("\"") && cleaned.hasSuffix("\"") {
+                cleaned = String(cleaned.dropFirst().dropLast())
+            }
             // Guard against API errors leaking into the UI
             if !cleaned.isEmpty && cleaned != text
                 && !cleaned.contains("\"type\":\"error\"")
@@ -1042,7 +1205,7 @@ final class TranscribeService: ObservableObject {
 
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: cliPath)
-                var args = ["--model", model, "-p", prompt, "--output-format", "text", "--dangerously-skip-permissions"]
+                var args = ["--model", model, "-p", prompt, "--output-format", "text", "--dangerously-skip-permissions", "--allowedTools", "Read,Glob,Write"]
                 if let sid = sessionId {
                     if resume {
                         args += ["--resume", sid]
@@ -1052,9 +1215,14 @@ final class TranscribeService: ObservableObject {
                 }
                 process.arguments = args
 
+                // Set CWD to a safe directory to prevent the CLI from scanning protected locations
+                process.currentDirectoryURL = home.appendingPathComponent(".claude")
+
                 let homePath = home.path
                 var env = ProcessInfo.processInfo.environment
                 env["HOME"] = homePath
+                // Prevent claude CLI from loading MCP servers that might access protected directories
+                env["DISABLE_MCP_SERVERS"] = "1"
                 // Ensure claude CLI is on PATH — prepend common locations
                 let extraPaths = "\(homePath)/.local/bin:/usr/local/bin:/opt/homebrew/bin"
                 let existingPath = env["PATH"] ?? "/usr/bin:/bin"

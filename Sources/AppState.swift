@@ -324,10 +324,14 @@ final class AppState: ObservableObject {
         // 3. Last resort: extract name-like tokens and check common locations
         let hints = extractProjectHints(from: title)
         let home = FileManager.default.homeDirectoryForCurrentUser.path
+        // Only check paths that won't trigger macOS TCC permission dialogs.
+        // Avoid: ~/Desktop, ~/Downloads, ~/Music, ~/Photos, ~/Movies, ~/Pictures, /Volumes, /Network
         let basePaths = [
-            "\(home)/Documents", "\(home)/Documents/Claude Code",
-            "\(home)/Projects", "\(home)/Developer",
-            "\(home)/Code", "\(home)/Desktop",
+            "\(home)/Documents/Claude Code",
+            "\(home)/Documents",
+            "\(home)/Projects",
+            "\(home)/Developer",
+            "\(home)/Code",
         ]
 
         for hint in hints {
@@ -395,11 +399,14 @@ final class AppState: ObservableObject {
         transcribeService.activeApp = activeApp
         transcribeService.projectContext = selectedProject?.claudeMDSummary ?? ""
         transcribeService.sessionContext = buildSessionContext()
+        // File paths for agentic Haiku — reads these directly
+        transcribeService.projectPath = selectedProject?.path
+        transcribeService.sessionJSONLPath = selectedClaudeSession?.filePath
         // Wire the session context provider for auto-refresh
         transcribeService.sessionContextProvider = { [weak self] in
             self?.buildSessionContext() ?? ""
         }
-        DebugLog.log("[PrePrompt] firePrePromptIfNeeded — project: \(selectedProject?.name ?? "nil"), ctx: \(transcribeService.projectContext.count), session: \(transcribeService.sessionContext.count)")
+        DebugLog.log("[PrePrompt] firePrePromptIfNeeded — project: \(selectedProject?.name ?? "nil"), jsonl: \(selectedClaudeSession.map { String($0.filePath.suffix(40)) } ?? "nil")")
         transcribeService.generatePrePrompt()
         // Watch the active JSONL file for changes — event-driven, not polled
         transcribeService.startAutoRefresh(watchingFile: selectedClaudeSession?.filePath)
@@ -580,7 +587,7 @@ final class AppState: ObservableObject {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: session.filePath)),
               let content = String(data: data, encoding: .utf8) else { return "" }
 
-        let lines = content.components(separatedBy: "\n").suffix(200)
+        let lines = content.components(separatedBy: "\n").suffix(300)
         var messages: [String] = []
 
         for line in lines {
@@ -590,13 +597,14 @@ final class AppState: ObservableObject {
                   let role = msg["role"] as? String else { continue }
 
             if role == "user" {
+                // User messages are the most important — they define intent
                 if let text = msg["content"] as? String, text.count > 5 {
-                    messages.append("User: \(String(text.prefix(300)))")
+                    messages.append("User: \(String(text.prefix(500)))")
                 } else if let contentArr = msg["content"] as? [[String: Any]] {
                     for c in contentArr {
                         if c["type"] as? String == "text",
                            let text = c["text"] as? String, text.count > 5 {
-                            messages.append("User: \(String(text.prefix(300)))")
+                            messages.append("User: \(String(text.prefix(500)))")
                         }
                     }
                 }
@@ -605,17 +613,51 @@ final class AppState: ObservableObject {
                     for c in contentArr {
                         if c["type"] as? String == "text",
                            let text = c["text"] as? String, text.count > 10 {
-                            messages.append("Claude: \(String(text.prefix(300)))")
+                            // Extract the action-dense part: skip filler like "Let me..." and grab what was done
+                            let condensed = Self.condenseAssistantMessage(text)
+                            if !condensed.isEmpty {
+                                messages.append("Claude: \(condensed)")
+                            }
                         }
                     }
                 }
             }
         }
 
-        let recent = messages.suffix(20)
+        // Keep last 25 messages — more context for better predictions
+        let recent = messages.suffix(25)
         guard !recent.isEmpty else { return "" }
         DebugLog.log("[Transcribe] Read \(recent.count) messages from Claude session: \(session.title.prefix(40))")
         return recent.joined(separator: "\n")
+    }
+
+    /// Extract the action-dense signal from a Claude response.
+    /// Skips filler ("Let me...", "I'll..."), keeps what was actually done/decided.
+    private static func condenseAssistantMessage(_ text: String) -> String {
+        let lines = text.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        // Skip filler prefixes — Claude loves these
+        let fillerPrefixes = [
+            "let me ", "i'll ", "i will ", "now let me ", "now i'll ",
+            "looking at ", "reading ", "checking ", "searching ",
+            "here's what", "i can see", "i see ", "i notice",
+        ]
+
+        // Keep lines that describe actions taken or decisions made
+        var kept: [String] = []
+        for line in lines {
+            let lower = line.lowercased()
+            // Skip pure filler
+            if fillerPrefixes.contains(where: { lower.hasPrefix($0) }) && !lower.contains("fix") && !lower.contains("add") { continue }
+            // Keep lines with action signals
+            kept.append(line)
+        }
+
+        // Take first 400 chars of the condensed result
+        let result = kept.joined(separator: " ")
+        return String(result.prefix(400))
     }
 
     /// Build a compact session context string from recent thread messages.
@@ -923,6 +965,7 @@ final class AppState: ObservableObject {
         // Start ARIA passive observation
         let projectId = selectedProject?.id ?? UUID()
         workflowRecorder.startPassiveObserving(projectId: projectId)
+        fileActivityMonitor.projectPath = selectedProject?.path
         fileActivityMonitor.start()
         keyFrameAnalyzer.start()
 

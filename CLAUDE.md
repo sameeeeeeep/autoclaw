@@ -1,19 +1,21 @@
 # Autoclaw — CLAUDE.md
 
-## Current Focus (2026-03-29)
-- **Theater PIP**: Floating Picture-in-Picture window with animated stage — themed background scenes (8 shows), chibi-style character sprites with idle/talking/gesturing animations, dialogue bubbles, and scrolling transcript. Persists on screen while user works. Separate from toast prediction cards.
-- **Theater Mode**: Optional toggle — ELI5 dialog generation + TTS voice playback. When enabled, tempo-adaptive dialog (2-6 lines based on session pace) with in-character term explainers. User messages referenced as a third character from the show (Richard for Silicon Valley, Johnny for Schitt's Creek, Michael for The Office, etc.).
-- **Owned TTS sidecar**: Autoclaw launches and manages the Python TTS server process directly (Pocket TTS on port 7893). Separate pip-installable package: `pip install autoclaw-theater` ([repo](https://github.com/sameeeeeeep/autoclaw-theater)). Auto-starts when theater PIP opens, auto-kills on app quit. Optional — falls back to text-only if not installed.
-- **Dialog queuing + cold opens**: New dialog arriving mid-playback is buffered (appended, not replaced) and played after the current batch finishes. A cold open (quick character quip) bridges the gap between batches so there's no silent pause.
-- **Session tempo tracking**: Tracks JSONL write cadence to classify session pace (rapid/active/relaxed/idle). Dialog turn count adapts: 2 lines during rapid exchanges, 6 lines during relaxed builds. Dialog finishes before next update arrives — no waste.
-- **Character personality templates**: Each of the 8 themes includes a full CHARACTER VOICE GUIDE — signature phrases, catchphrases, show-universe analogies, and cold open templates. Injected into the pre-prompt so Haiku writes dialog that sounds like the characters without needing a heavier model.
-- **JSONL file watcher**: Replaced 15s polling with DispatchSource file watcher on Claude Code session JSONL. 4s debounce after writes settle. Zero CPU when idle, reactive within seconds of a completed response.
-- **Liquid glass UI**: macOS 26 Tahoe `.glassEffect()` on toast + theater PIP (with fallback for older macOS). Intelligence glow on borders while Haiku generates or TTS speaks.
-- **Intent-based predictions**: Pre-prompt reads the user's last 2-3 messages and predicts what they'll TELL CLAUDE to build next — specific features, connections, and edge cases, not QA tasks. References actual file/feature names from the session.
-- **JSON pre-prompt format**: Haiku returns `{"predictions":[...], "dialog":[...]}` — structured JSON. Robust parser with JSON object → JSON array → A:/B: → raw line fallback chain.
-- **Persistent Haiku sessions**: Pre-prompt and enhance share a single persistent Haiku CLI session per project. Context loaded once on first call (`--session-id`), follow-ups use `--resume`. Stale session auto-detection: if resume returns empty, auto-reprimes fresh. No redundant context reloading.
-- **Imperative predictions**: Pre-prompt enforces predictions as imperative commands starting with a verb (add, wire, refactor, fix). Never questions, observations, or meta-comments. BAD examples explicitly blocked.
-- **Transcribe pipeline**: Raw WhisperKit output → inject immediately at cursor → enhance in background. Pre-stop + post-stop chunk drain prevents race condition loss.
+## Current Focus (2026-03-30)
+- **PM Agent architecture**: Haiku runs as a product/project manager in parallel to the main session. Sandboxed to `.autoclaw/` folder — reads session JSONL + CLAUDE.md/README via `--allowedTools Read,Glob,Write`. Maintains a kanban board (`board.md`), predicts next product actions, updates board on every round.
+- **Board PIP**: Floating kanban widget (BoardPIPView/BoardPIPWindow) — separate NSPanel positioned bottom-left. Shows todo/in-progress/done with status indicators. Tapping any item injects at cursor + copies to clipboard. Toggle via icon in toast header.
+- **Prediction Add/Use**: Prediction cards now have both "Add" (saves to board.md todo) and "Use" (injects at cursor). Transcript cards have `+` icon to add to board todo.
+- **Filler content system**: Pre-written multi-turn dialog fillers (3-4 per theme, all 8 themes) in `.autoclaw/fillers.json`. Auto-plays on 20s timer when idle. Shows "Playing filler" indicator (purple) in Theater PIP. Non-repeatable — fillers are permanently deleted from JSON after playing.
+- **Cold opens**: Project-specific cold open dialogs in `.autoclaw/cold-opens.json` (2 per theme). Play immediately when Theater opens (from voice cache if available) while Haiku primes in background. Non-repeatable — deleted from JSON after playing.
+- **Voice caching**: Pre-synthesize all fillers + cold opens to WAV files in `.autoclaw/voice-cache/`. Cache key = hash(text + voiceID). Cache warming runs in background batches of 6 when sidecar ready. Cold opens play from cache with zero TTS latency.
+- **Theater toggle cleanup**: Disabling theater from toast fully stops everything — filler loop, TTS playback, queue. Same on session end.
+- **Theater PIP**: Floating Picture-in-Picture window with animated stage — themed background scenes (8 shows), chibi-style character sprites with idle/talking/gesturing animations, dialogue bubbles, and scrolling transcript. Persists on screen while user works.
+- **Theater Mode**: Optional toggle — ELI5 dialog generation + TTS voice playback. When enabled, tempo-adaptive dialog (2-6 lines based on session pace) with in-character term explainers. User messages referenced as a third character from the show.
+- **Owned TTS sidecar**: Autoclaw launches and manages the Python TTS server process directly (Pocket TTS on port 7893). Separate pip-installable package: `pip install autoclaw-theater`. Auto-starts when theater PIP opens, auto-kills on app quit. Optional — falls back to text-only if not installed.
+- **Dialog queuing + cold opens**: New dialog arriving mid-playback is buffered (appended, not replaced) and played after the current batch finishes. Cold opens bridge the gap.
+- **Session tempo tracking**: Tracks JSONL write cadence to classify session pace (rapid/active/relaxed/idle). Dialog turn count adapts: 2 lines during rapid exchanges, 6 lines during relaxed builds.
+- **JSONL file watcher**: DispatchSource file watcher on Claude Code session JSONL. 4s debounce. Zero CPU when idle.
+- **Liquid glass UI**: macOS 26 Tahoe `.glassEffect()` on toast + theater PIP + board PIP (with fallback for older macOS). Intelligence glow on borders while Haiku generates or TTS speaks.
+- **Transcribe pipeline**: Raw WhisperKit output → inject immediately at cursor → enhance in background.
 - **Next**: OpenClaw/ClawHub lazy skill discovery, Haiku cloud routing for Analyze mode, polish + ship.
 
 ## What this is
@@ -80,12 +82,15 @@ Bypasses Qwen entirely — Qwen isn't smart enough to learn patterns. Records ra
 - Gets a ~500-800 token text buffer of last 60s of sensor data
 - **Status: FULLY WIRED** — OllamaService HTTP client, detection prompt, event-driven calls from sensors, cleanup in TranscribeService
 
-### Haiku (cloud, via autoclawd OAuth) — The Concierge
+### Haiku (cloud, via autoclawd OAuth) — The PM Agent
+- Runs as a product/project manager in parallel to the main Claude Code session
+- Agentic: has `--allowedTools Read,Glob,Write` to read session JSONL, CLAUDE.md/README, and `.autoclaw/` folder
+- Maintains kanban board (`.autoclaw/board.md`) — moves items to Done, adds new Todos
+- Predicts next product-level actions (not code review, not QA)
 - Called for Transcribe smart-enhance (post-injection, non-blocking, configurable)
 - Called for Transcribe cleanup (if selected as cleanup provider)
-- Does ALL the smart work when needed: classification, MCP tool matching, plan building, toast content
-- Has access to user's installed MCP tool manifest for routing
-- **Status: FULLY WORKING** — transcribe cleanup + smart enhance via claude CLI
+- Sandboxed to `.autoclaw/` + session JSONL + project context files — no direct codebase access
+- **Status: FULLY WORKING** — PM agent + transcribe cleanup + smart enhance via claude CLI
 
 ### Claude (cloud, via autoclawd OAuth) — The Brain
 - Called only after user approves (taps toast) in Analyze mode
@@ -125,8 +130,9 @@ When Qwen flags something in Analyze mode:
 ## UI Layer
 
 ### Built & Working
-- **UnifiedToastView** — Cofia-style card (340px, 16px corners) with mode routing
+- **UnifiedToastView** — Cofia-style card (340px, 16px corners) with mode routing, theater/board toggle icons, Add/Use prediction buttons, + icon on transcripts
 - **TheaterPIPView + TheaterPIPWindow** — floating PIP with animated stage: themed backgrounds (TheaterScene), character sprites (TheaterSprite) with idle/talking/gesturing, dialogue bubbles, transcript. 380px wide, liquid glass.
+- **BoardPIPView + BoardPIPWindow** — floating kanban widget (280px, bottom-left). Status indicators (empty circle=todo, dot=in-progress, checkmark=done), tap to inject + clipboard. Liquid glass.
 - **TheaterSprite** — 16 chibi-style character sprites across 8 themes with per-character appearance (hair, glasses, beard, accessories like lab coat/tie/armor/holographic). Shape-based renderer with animation states.
 - **TheaterScene** — 8 themed background scenes: Silicon Valley server room, Rosebud Motel, Dunder Mifflin, Central Perk, Rick's garage lab, 221B Baker Street, Breaking Bad lab, Iron Man workshop. Animated elements (portal spin, fireplace flicker, LED blink, arc reactor pulse).
 - **FrictionToastView** — detection → confirm → running → success/error states with step progress
@@ -149,9 +155,11 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 ## What's FULLY BUILT
 - **Theater PIP** with animated stage: 8 themed backgrounds, 16 character sprites (idle/talking/gesturing), dialogue bubbles, scrolling transcript, liquid glass, intelligence glow while TTS speaks
 - **Theater Mode** with ELI5 dialog: 2-6 line multi-turn TV character exchange (8 themes) with character personality templates (signature phrases, show-universe analogies, catchphrases), in-character term explainers, third-character user framing, TTS voice playback
-- **DialogVoiceService**: Owned Python TTS sidecar (`pip install autoclaw-theater`), auto-launch/kill lifecycle, dialog queuing (buffers new dialog mid-playback), cold opens (character quips bridge gaps between batches), `/synthesize_dialogue` batch endpoint, sequential WAV playback, graceful text-only fallback
+- **DialogVoiceService**: Owned Python TTS sidecar (`pip install autoclaw-theater`), auto-launch/kill lifecycle, dialog queuing (buffers new dialog mid-playback), cold opens (play on Theater open from cache), fillers (auto-play on 20s idle timer), voice caching (WAV pre-synthesis), non-repeatable content (deleted from JSON after play), graceful text-only fallback
+- **Board PIP**: Floating kanban widget with PM agent maintaining `board.md`. Add predictions/transcripts to todo. Tap items to inject at cursor + clipboard.
+- **PM Agent**: Haiku as product manager — sandboxed file access, kanban maintenance, product-level predictions
 - **JSONL file watcher**: DispatchSource-based event-driven refresh (replaces 15s polling), 4s debounce
-- **Liquid glass UI**: macOS 26 `.glassEffect()` on toast with fallback, intelligence border glow while generating
+- **Liquid glass UI**: macOS 26 `.glassEffect()` on toast + theater + board with fallback, intelligence border glow while generating
 - **Transcribe mode** end-to-end: WhisperKit STT → cleanup (Qwen/Haiku/none) → inject at cursor → smart enhance (Haiku/Sonnet/none)
 - **Analyze mode** pipeline: ContextBuffer → Qwen bouncer → template/MCP/Claude routing → FrictionToastView
 - **Task mode** end-to-end: clipboard → deduction → execution → result
@@ -189,6 +197,12 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 - Gate 2: "Execute these exact tools" (run) — with intent lock diff
 
 ## Key Decisions
+- PM agent with sandboxed file access: Haiku reads session JSONL + CLAUDE.md/README via --allowedTools, maintains .autoclaw/board.md kanban. No direct codebase access — only .autoclaw/ folder (2026-03-30)
+- Board PIP as separate floating widget: NSPanel positioned bottom-left (opposite Theater at bottom-right). Tapping any item injects at cursor + copies to clipboard (2026-03-30)
+- Non-repeatable fillers/cold opens: after playing, permanently removed from in-memory dict AND deleted from JSON file. Once played, gone forever (2026-03-30)
+- Voice caching for instant playback: hash(text + voiceID) → WAV file in .autoclaw/voice-cache/. Cache warming pre-synthesizes all fillers + cold opens in batches of 6. Cold opens play from cache with zero TTS latency (2026-03-30)
+- Prediction Add/Use buttons: "Use" injects at cursor (existing), "Add" appends to board.md todo. Transcript cards get + icon for same (2026-03-30)
+- Theater toggle fully disables: dismissing theater from toast stops filler loop + TTS + queue, not just PIP window (2026-03-30)
 - Theater PIP as separate floating window: animated stage with sprites/backgrounds lives in its own PIP, persists independently from toast. Only dismisses on explicit user action or session end (2026-03-29)
 - Owned TTS sidecar as separate pip package: `pip install autoclaw-theater` — Autoclaw searches PATH for CLI first, falls back to server.py in known dirs. Process managed by DialogVoiceService, killed on app quit (2026-03-29)
 - Dialog queuing: new dialog arriving mid-playback is buffered, played after current batch. Cold open (random character quip from theme templates) bridges the gap — no silent pause between batches (2026-03-29)
@@ -235,10 +249,11 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 ## Tech Stack
 Swift 6.3 + SwiftUI, SPM (Package.swift), WhisperKit (base.en, Core ML), NSStatusItem, toast cards, NSPanel side panel, SQLite/GRDB, launchd, SKILL.md OpenClaw registry, macOS 14+, Ollama (Qwen 2.5 3B)
 
-## File Inventory (52 files)
+## File Inventory (54 files)
 **Core:** App.swift, AppDelegate.swift, AppState.swift
 **Voice:** VoiceService.swift, WhisperKitService.swift, TranscribeService.swift, CursorInjector.swift, DialogVoiceService.swift
 **Theater:** TheaterPIPView.swift, TheaterPIPWindow.swift, TheaterSprite.swift, TheaterScene.swift
+**Board:** BoardPIPView.swift, BoardPIPWindow.swift
 **Analyze:** AnalyzePipeline.swift, ContextBuffer.swift, FrictionDetector.swift, WorkflowMatcher.swift
 **Sensors:** ActiveWindowService.swift, ClipboardMonitor.swift, ScreenOCR.swift, BrowserBridge.swift, KeyFrameAnalyzer.swift, ScreenCaptureStream.swift, FileActivityMonitor.swift
 **MCP:** CapabilityMap.swift, CapabilityDiscovery.swift

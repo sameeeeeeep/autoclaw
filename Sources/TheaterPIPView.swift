@@ -20,9 +20,8 @@ struct TheaterPIPView: View {
     @State private var char2Anim = SpriteAnimContext()
     @State private var timer: Timer?
 
-    // Track which line is currently "active" (being spoken)
-    @State private var activeLineIndex: Int = -1
-    @State private var displayedLineIndex: Int = -1 // for bubble display with delay
+    // displayedLineIndex drives bubble + transcript highlight, synced from TTS currentLineIndex
+    @State private var displayedLineIndex: Int = -1
 
     var body: some View {
         VStack(spacing: 0) {
@@ -65,13 +64,21 @@ struct TheaterPIPView: View {
         .shadow(color: .black.opacity(colorScheme == .dark ? 0.5 : 0.12), radius: 20, y: 6)
         .onAppear { startAnimationLoop() }
         .onDisappear { stopAnimationLoop() }
-        .onChange(of: transcribeService.sessionDialog.count) {
-            advanceActiveLine()
-        }
-        .onChange(of: transcribeService.dialogVoice.isSpeaking) {
-            if !transcribeService.dialogVoice.isSpeaking {
-                // Speech finished — show last line, return to idle
-                activeLineIndex = -1
+        .onChange(of: transcribeService.dialogVoice.currentLineIndex) {
+            let idx = transcribeService.dialogVoice.currentLineIndex
+            if idx >= 0 && idx < transcribeService.sessionDialog.count {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    displayedLineIndex = idx
+                }
+            } else if idx < 0 {
+                // TTS finished — keep last bubble visible briefly, then clear
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(2))
+                    guard transcribeService.dialogVoice.currentLineIndex < 0 else { return }
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        displayedLineIndex = -1
+                    }
+                }
             }
         }
     }
@@ -100,9 +107,9 @@ struct TheaterPIPView: View {
             if transcribeService.dialogVoice.isSpeaking {
                 HStack(spacing: 3) {
                     speakingDots
-                    Text("Speaking")
+                    Text(transcribeService.dialogVoice.isPlayingFiller ? "Filler" : "Speaking")
                         .font(.system(size: 8, weight: .medium))
-                        .foregroundStyle(Theme.teal.opacity(0.6))
+                        .foregroundStyle(transcribeService.dialogVoice.isPlayingFiller ? Theme.purple.opacity(0.6) : Theme.teal.opacity(0.6))
                 }
             }
 
@@ -297,11 +304,12 @@ struct TheaterPIPView: View {
     // MARK: - Speaking Logic
 
     private var currentSpeakingCharacter: String? {
+        let idx = transcribeService.dialogVoice.currentLineIndex
         guard transcribeService.dialogVoice.isSpeaking,
-              activeLineIndex >= 0,
-              activeLineIndex < transcribeService.sessionDialog.count
+              idx >= 0,
+              idx < transcribeService.sessionDialog.count
         else { return nil }
-        return transcribeService.sessionDialog[activeLineIndex].character
+        return transcribeService.sessionDialog[idx].character
     }
 
     private func spriteState(for charName: String, speaking: String?) -> SpriteAnimState {
@@ -311,52 +319,8 @@ struct TheaterPIPView: View {
         return .gesturing
     }
 
-    private func advanceActiveLine() {
-        let count = transcribeService.sessionDialog.count
-        guard count > 0 else { return }
-
-        if activeLineIndex < 0 {
-            // First dialog ever — start from line 0
-            activeLineIndex = 0
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                displayedLineIndex = 0
-            }
-            scheduleNextLine()
-        } else if activeLineIndex >= count - 1 || !transcribeService.dialogVoice.isSpeaking {
-            // New lines were appended and we're done with the old batch (or not speaking).
-            // Jump to the start of the newly appended lines and cycle from there.
-            // The new lines start right after the old activeLineIndex.
-            let nextStart = activeLineIndex + 1
-            if nextStart < count {
-                activeLineIndex = nextStart
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                    displayedLineIndex = nextStart
-                }
-                scheduleNextLine()
-            }
-            // else: no new lines to show, scheduled advance will handle naturally
-        }
-        // else: still cycling through current batch — scheduled advance picks up appended lines
-    }
-
-    private func scheduleNextLine() {
-        let count = transcribeService.sessionDialog.count
-        guard activeLineIndex < count - 1 else { return }
-
-        // Estimate time per line based on text length (~80ms per char, min 1.5s, max 5s)
-        let currentLine = transcribeService.sessionDialog[activeLineIndex].line
-        let duration = min(max(Double(currentLine.count) * 0.08, 1.5), 5.0)
-
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(duration))
-            guard activeLineIndex < transcribeService.sessionDialog.count - 1 else { return }
-            activeLineIndex += 1
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                displayedLineIndex = activeLineIndex
-            }
-            scheduleNextLine()
-        }
-    }
+    // Bubble timing is now driven by DialogVoiceService.currentLineIndex
+    // — no local scheduling needed. See onChange(of: currentLineIndex) above.
 
     // MARK: - Speaking Dots
 

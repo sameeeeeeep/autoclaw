@@ -2,7 +2,7 @@ import Foundation
 import AppKit
 
 /// Monitors file system activity to detect file transfers between apps.
-/// Watches Downloads, Desktop, and recently-changed files to connect
+/// Watches the active project directory + temp for recently-changed files to connect
 /// file operations to the app sequence (e.g., "downloaded CSV from Chrome → opened in Numbers").
 @MainActor
 final class FileActivityMonitor: ObservableObject {
@@ -85,16 +85,17 @@ final class FileActivityMonitor: ObservableObject {
     private var activeApp: String = ""
     private var scanTimer: Timer?
 
-    /// Directories to watch for file activity
-    /// Only watch Documents and temp (for autoclaw's own files).
-    /// Desktop and Downloads were triggering unnecessary permission dialogs
-    /// and capturing noise (browser downloads, screenshot files, etc.)
+    /// Directories to watch for file activity.
+    /// Scoped to the active project dir + temp. Avoids broad ~/Documents scanning
+    /// which can trigger macOS TCC permission dialogs for protected subdirectories.
+    var projectPath: String?
+
     private var watchedPaths: [String] {
-        let home = NSHomeDirectory()
-        return [
-            home + "/Documents",
-            NSTemporaryDirectory(),
-        ]
+        var paths = [NSTemporaryDirectory()]
+        if let proj = projectPath, !proj.isEmpty {
+            paths.insert(proj, at: 0)
+        }
+        return paths
     }
 
     // MARK: - Start / Stop

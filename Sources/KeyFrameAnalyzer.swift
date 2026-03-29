@@ -654,11 +654,16 @@ final class KeyFrameAnalyzer: ObservableObject {
                 let process = Process()
                 process.executableURL = claudeURL
                 process.arguments = ["--model", "haiku", "-p", fullPrompt, "--output-format", "json", "--dangerously-skip-permissions"]
+                // Set CWD to safe directory — prevents CLI from scanning protected locations
+                let home = FileManager.default.homeDirectoryForCurrentUser
+                process.currentDirectoryURL = home.appendingPathComponent(".claude")
 
                 var env = ProcessInfo.processInfo.environment
                 env.removeValue(forKey: "CLAUDECODE")
                 env.removeValue(forKey: "CLAUDE_CODE_ENTRYPOINT")
                 env.removeValue(forKey: "CLAUDE_CODE_OAUTH_TOKEN")
+                // Prevent CLI from loading MCP servers that might access protected directories
+                env["DISABLE_MCP_SERVERS"] = "1"
 
                 let apiKey = AppSettings.shared.anthropicAPIKey
                 if !apiKey.isEmpty {

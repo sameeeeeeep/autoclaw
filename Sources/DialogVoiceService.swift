@@ -10,6 +10,11 @@ import AVFoundation
 final class DialogVoiceService: ObservableObject {
     @Published var isSpeaking = false
     @Published var sidecarReady = false
+    /// Index of the line currently being spoken within the full sessionDialog array.
+    /// -1 when not speaking. TheaterPIPView uses this to sync bubbles with audio.
+    @Published var currentLineIndex: Int = -1
+    /// True when playing filler content between real dialogs
+    @Published var isPlayingFiller = false
 
     private var player: AVAudioPlayer?
     private var playbackTask: Task<Void, Never>?
@@ -18,9 +23,11 @@ final class DialogVoiceService: ObservableObject {
 
     /// Queued dialog — buffered when new dialog arrives mid-playback.
     /// Played automatically after the current batch finishes.
-    private var dialogQueue: [(lines: [DialogLine], theme: DialogTheme)] = []
+    private var dialogQueue: [(lines: [DialogLine], theme: DialogTheme, baseIndex: Int)] = []
     private var isPlayingBatch = false
     private var lastColdOpenIndex: Int = -1
+    private var fillerTimer: Timer?
+    private var loadedFillers: [String: [[DialogLine]]] = [:]  // themeId -> array of filler conversations
 
     private static let sidecarBase = "http://127.0.0.1:7893"
     private static let port = 7893
@@ -30,18 +37,25 @@ final class DialogVoiceService: ObservableObject {
     /// Speak dialog lines in sequence using character voices from the TTS sidecar.
     /// If currently speaking, queues the new dialog and injects a cold open to bridge the gap.
     /// Non-blocking — fires and forgets.
-    func speak(_ lines: [DialogLine], theme: DialogTheme) {
+    /// - Parameter baseIndex: index of the first line in the full sessionDialog array (for bubble sync)
+    func speak(_ lines: [DialogLine], theme: DialogTheme, baseIndex: Int = 0) {
         guard !lines.isEmpty else { return }
-        DebugLog.log("[TTS] speak() called — \(lines.count) lines, theme: \(theme.id), isPlayingBatch: \(isPlayingBatch)")
+        DebugLog.log("[TTS] speak() called — \(lines.count) lines, theme: \(theme.id), baseIndex: \(baseIndex), isPlayingBatch: \(isPlayingBatch)")
+
+        // Interrupt filler if playing
+        if isPlayingFiller {
+            stop()
+            isPlayingFiller = false
+        }
 
         if isPlayingBatch {
             // Currently speaking — queue this batch for after the current one finishes
-            dialogQueue.append((lines: lines, theme: theme))
+            dialogQueue.append((lines: lines, theme: theme, baseIndex: baseIndex))
             DebugLog.log("[TTS] Queued \(lines.count) lines (queue depth: \(dialogQueue.count))")
             return
         }
 
-        startBatch(lines: lines, theme: theme)
+        startBatch(lines: lines, theme: theme, baseIndex: baseIndex)
     }
 
     /// Stop any in-progress playback and clear the queue
@@ -50,21 +64,23 @@ final class DialogVoiceService: ObservableObject {
         playbackTask?.cancel()
         playbackTask = nil
         isPlayingBatch = false
+        currentLineIndex = -1
         stopPlayback()
     }
 
     // MARK: - Batch Playback
 
-    private func startBatch(lines: [DialogLine], theme: DialogTheme) {
+    private func startBatch(lines: [DialogLine], theme: DialogTheme, baseIndex: Int = 0) {
         playbackTask?.cancel()
         stopPlayback()
 
         isPlayingBatch = true
-        DebugLog.log("[TTS] startBatch — \(lines.count) lines, sidecarReady: \(sidecarReady)")
+        DebugLog.log("[TTS] startBatch — \(lines.count) lines, baseIndex: \(baseIndex), sidecarReady: \(sidecarReady)")
 
         playbackTask = Task { @MainActor in
             defer {
                 isPlayingBatch = false
+                currentLineIndex = -1
                 // Check for queued dialog — play next batch if available
                 drainQueue()
             }
@@ -99,10 +115,11 @@ final class DialogVoiceService: ObservableObject {
             let validChunks = audioChunks.compactMap { $0 }.count
             DebugLog.log("[TTS] Got \(validChunks)/\(audioChunks.count) audio chunks, playing...")
 
-            // Play each chunk sequentially
+            // Play each chunk sequentially — publish currentLineIndex so bubbles sync
             isSpeaking = true
             for (i, chunk) in audioChunks.enumerated() {
                 guard !Task.isCancelled else { break }
+                currentLineIndex = baseIndex + i
                 guard let data = chunk else {
                     DebugLog.log("[TTS] Chunk \(i) was nil, skipping")
                     continue
@@ -123,13 +140,16 @@ final class DialogVoiceService: ObservableObject {
         // Inject a cold open to bridge the gap between batches (10-15s of character banter)
         let coldOpen = pickColdOpen(theme: next.theme)
         var linesWithBridge = [DialogLine]()
+        // Cold open doesn't map to a sessionDialog index, so offset baseIndex accordingly
+        let coldOpenOffset = coldOpen != nil ? 1 : 0
         if let cold = coldOpen {
             linesWithBridge.append(cold)
         }
         linesWithBridge.append(contentsOf: next.lines)
 
         DebugLog.log("[TTS] Draining queue — playing next batch (\(linesWithBridge.count) lines, \(dialogQueue.count) remaining)")
-        startBatch(lines: linesWithBridge, theme: next.theme)
+        // baseIndex for cold open is -1 (won't match any sessionDialog line), real lines start after
+        startBatch(lines: linesWithBridge, theme: next.theme, baseIndex: next.baseIndex - coldOpenOffset)
     }
 
     /// Pick a random cold open line from the theme's template, avoiding repeats.
@@ -411,5 +431,269 @@ private final class PlaybackDelegate: NSObject, AVAudioPlayerDelegate {
 
     func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
         onFinished()
+    }
+}
+
+// MARK: - Filler & Cold Open Content + Voice Cache
+
+extension DialogVoiceService {
+
+    private var cacheDirName: String { "voice-cache" }
+
+    // MARK: - Loading
+
+    /// Load fillers + cold opens from .autoclaw/ and prepare voice cache
+    func loadContent(from projectPath: String, theme: DialogTheme) {
+        let autoclawDir = "\(projectPath)/.autoclaw"
+        let fm = FileManager.default
+
+        // Ensure cache dir exists
+        let cacheDir = "\(autoclawDir)/\(cacheDirName)"
+        if !fm.fileExists(atPath: cacheDir) {
+            try? fm.createDirectory(atPath: cacheDir, withIntermediateDirectories: true)
+        }
+
+        // Load fillers
+        loadDialogFile("\(autoclawDir)/fillers.json")
+        // Load cold opens into same structure with "cold-" prefix
+        loadDialogFile("\(autoclawDir)/cold-opens.json", keyPrefix: "cold-")
+
+        DebugLog.log("[TTS] Loaded content — fillers: \(loadedFillers.filter { !$0.key.hasPrefix("cold-") }.count) themes, cold opens: \(loadedFillers.filter { $0.key.hasPrefix("cold-") }.count) themes")
+
+        // Warm cache in background
+        Task { @MainActor in
+            await warmCache(theme: theme, cacheDir: cacheDir)
+        }
+    }
+
+    private func loadDialogFile(_ path: String, keyPrefix: String = "") {
+        guard let data = FileManager.default.contents(atPath: path),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        for (themeId, value) in json {
+            guard let conversations = value as? [[[String: String]]] else { continue }
+            loadedFillers["\(keyPrefix)\(themeId)"] = conversations.map { conv in
+                conv.compactMap { dict in
+                    guard let char = dict["char"], let line = dict["line"] else { return nil }
+                    return DialogLine(character: char, line: line)
+                }
+            }
+        }
+    }
+
+    // MARK: - Voice Cache
+
+    /// Cache key for a dialog line — hash of text + voiceID
+    private func cacheKey(text: String, voiceID: String) -> String {
+        let raw = "\(voiceID):\(text)"
+        var hash: UInt64 = 5381
+        for byte in raw.utf8 { hash = hash &* 33 &+ UInt64(byte) }
+        return String(hash, radix: 16)
+    }
+
+    /// Get cached WAV data for a line, or nil if not cached
+    func cachedAudio(text: String, voiceID: String, cacheDir: String) -> Data? {
+        let key = cacheKey(text: text, voiceID: voiceID)
+        let path = "\(cacheDir)/\(key).wav"
+        return FileManager.default.contents(atPath: path)
+    }
+
+    /// Save WAV data to cache
+    private func saveToCache(data: Data, text: String, voiceID: String, cacheDir: String) {
+        let key = cacheKey(text: text, voiceID: voiceID)
+        let path = "\(cacheDir)/\(key).wav"
+        try? data.write(to: URL(fileURLWithPath: path))
+    }
+
+    /// Pre-synthesize all fillers + cold opens for the given theme
+    private func warmCache(theme: DialogTheme, cacheDir: String) async {
+        let ready = sidecarReady ? true : await checkSidecar()
+        guard ready else {
+            DebugLog.log("[TTS] Cache warm skipped — sidecar not ready")
+            return
+        }
+
+        var toSynthesize: [(text: String, voiceID: String)] = []
+
+        // Collect all lines that aren't cached yet
+        for prefix in ["", "cold-"] {
+            let key = "\(prefix)\(theme.id)"
+            guard let convos = loadedFillers[key] else { continue }
+            for convo in convos {
+                for line in convo {
+                    let voiceID = line.character == theme.char1 ? theme.voice1 : theme.voice2
+                    if cachedAudio(text: line.line, voiceID: voiceID, cacheDir: cacheDir) == nil {
+                        toSynthesize.append((text: line.line, voiceID: voiceID))
+                    }
+                }
+            }
+        }
+
+        guard !toSynthesize.isEmpty else {
+            DebugLog.log("[TTS] Cache already warm (\(cacheDir))")
+            return
+        }
+
+        DebugLog.log("[TTS] Warming cache — \(toSynthesize.count) lines to synthesize")
+
+        // Synthesize in batches of 6
+        for batch in stride(from: 0, to: toSynthesize.count, by: 6) {
+            let end = min(batch + 6, toSynthesize.count)
+            let slice = Array(toSynthesize[batch..<end])
+            let audioChunks = await synthesizeDialogue(turns: slice)
+            for (i, chunk) in audioChunks.enumerated() {
+                if let data = chunk {
+                    saveToCache(data: data, text: slice[i].text, voiceID: slice[i].voiceID, cacheDir: cacheDir)
+                }
+            }
+        }
+
+        DebugLog.log("[TTS] Cache warm complete — \(toSynthesize.count) lines cached")
+    }
+
+    // MARK: - Cold Open
+
+    /// Play a cold open immediately from cache. Returns true if played.
+    /// The played cold open is permanently removed so it never repeats.
+    func playColdOpen(theme: DialogTheme, projectPath: String) -> Bool {
+        let cacheDir = "\(projectPath)/.autoclaw/\(cacheDirName)"
+        let key = "cold-\(theme.id)"
+        guard var coldOpens = loadedFillers[key], !coldOpens.isEmpty else { return false }
+
+        // Pick a random cold open and remove it
+        let idx = Int.random(in: 0..<coldOpens.count)
+        let convo = coldOpens[idx]
+        guard !convo.isEmpty else { return false }
+
+        coldOpens.remove(at: idx)
+        loadedFillers[key] = coldOpens
+
+        // Persist removal to cold-opens.json
+        removeConvoFromJSON(file: "\(projectPath)/.autoclaw/cold-opens.json", themeId: theme.id, index: idx)
+
+        // Check if ALL lines are cached
+        let allCached = convo.allSatisfy { line in
+            let voiceID = line.character == theme.char1 ? theme.voice1 : theme.voice2
+            return cachedAudio(text: line.line, voiceID: voiceID, cacheDir: cacheDir) != nil
+        }
+
+        if allCached {
+            DebugLog.log("[TTS] Playing cold open from cache (\(convo.count) lines)")
+            isPlayingFiller = true
+            playCachedConvo(convo, theme: theme, cacheDir: cacheDir)
+            return true
+        }
+
+        // Not cached yet — fall back to live TTS
+        DebugLog.log("[TTS] Cold open not cached, using live TTS")
+        isPlayingFiller = true
+        startBatch(lines: convo, theme: theme, baseIndex: -100)
+        return true
+    }
+
+    /// Play a conversation entirely from cache
+    private func playCachedConvo(_ lines: [DialogLine], theme: DialogTheme, cacheDir: String) {
+        playbackTask?.cancel()
+        stopPlayback()
+        isPlayingBatch = true
+
+        playbackTask = Task { @MainActor in
+            defer {
+                isPlayingBatch = false
+                isPlayingFiller = false
+                currentLineIndex = -1
+                drainQueue()
+            }
+
+            isSpeaking = true
+            for (i, line) in lines.enumerated() {
+                guard !Task.isCancelled else { break }
+                currentLineIndex = -100 + i  // filler index range
+                let voiceID = line.character == theme.char1 ? theme.voice1 : theme.voice2
+                if let data = cachedAudio(text: line.line, voiceID: voiceID, cacheDir: cacheDir) {
+                    await playAndWait(data: data)
+                }
+            }
+            isSpeaking = false
+        }
+    }
+
+    // MARK: - Filler Loop
+
+    /// Start playing random filler dialog on a timer when idle
+    func startFillerLoop(theme: DialogTheme, projectPath: String? = nil) {
+        stopFillerLoop()
+        let projPath = projectPath
+        fillerTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.playRandomFiller(theme: theme, projectPath: projPath)
+            }
+        }
+    }
+
+    func stopFillerLoop() {
+        fillerTimer?.invalidate()
+        fillerTimer = nil
+    }
+
+    private func playRandomFiller(theme: DialogTheme, projectPath: String?) {
+        guard !isPlayingBatch, dialogQueue.isEmpty else { return }
+
+        guard var fillers = loadedFillers[theme.id], !fillers.isEmpty else { return }
+
+        // Pick a random filler and remove it so it never repeats
+        let idx = Int.random(in: 0..<fillers.count)
+        let filler = fillers[idx]
+        guard !filler.isEmpty else { return }
+
+        fillers.remove(at: idx)
+        loadedFillers[theme.id] = fillers
+
+        // Persist removal to fillers.json
+        if let projPath = projectPath {
+            removeConvoFromJSON(file: "\(projPath)/.autoclaw/fillers.json", themeId: theme.id, index: idx)
+        }
+
+        isPlayingFiller = true
+        DebugLog.log("[TTS] Playing filler (\(filler.count) lines) for \(theme.id), \(fillers.count) remaining")
+
+        // Try cache first
+        if let projPath = projectPath {
+            let cacheDir = "\(projPath)/.autoclaw/\(cacheDirName)"
+            let allCached = filler.allSatisfy { line in
+                let voiceID = line.character == theme.char1 ? theme.voice1 : theme.voice2
+                return cachedAudio(text: line.line, voiceID: voiceID, cacheDir: cacheDir) != nil
+            }
+            if allCached {
+                playCachedConvo(filler, theme: theme, cacheDir: cacheDir)
+                return
+            }
+        }
+
+        startBatch(lines: filler, theme: theme, baseIndex: -100)
+    }
+
+    /// Called when a real dialog batch arrives — stop filler, reset flag
+    func interruptFiller() {
+        if isPlayingFiller {
+            isPlayingFiller = false
+        }
+    }
+
+    // MARK: - Persist Removals
+
+    /// Remove a conversation at `index` from a JSON file so it's never played again.
+    private func removeConvoFromJSON(file: String, themeId: String, index: Int) {
+        guard let data = FileManager.default.contents(atPath: file),
+              var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var convos = json[themeId] as? [[[String: String]]] else { return }
+
+        guard index < convos.count else { return }
+        convos.remove(at: index)
+        json[themeId] = convos
+
+        if let updated = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
+            try? updated.write(to: URL(fileURLWithPath: file))
+            DebugLog.log("[TTS] Removed played convo from \(file) (\(themeId)[\(index)]), \(convos.count) remaining")
+        }
     }
 }
