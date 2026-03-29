@@ -2,13 +2,17 @@
 
 ## Current Focus (2026-03-29)
 - **Theater PIP**: Floating Picture-in-Picture window with animated stage — themed background scenes (8 shows), chibi-style character sprites with idle/talking/gesturing animations, dialogue bubbles, and scrolling transcript. Persists on screen while user works. Separate from toast prediction cards.
-- **Theater Mode**: Optional toggle — ELI5 dialog generation + TTS voice playback. When enabled, 2-6 line multi-turn dialog with in-character term explainers. User messages referenced as a third character from the show (Richard for Silicon Valley, Johnny for Schitt's Creek, Michael for The Office, etc.).
-- **Owned TTS sidecar**: Autoclaw launches and manages the Python TTS server process directly (Pocket TTS on port 7893). No dependency on SiliconValley Theater app. Auto-starts when theater PIP opens, auto-kills on app quit. Optional — falls back to text-only if TTSSidecar directory not found.
+- **Theater Mode**: Optional toggle — ELI5 dialog generation + TTS voice playback. When enabled, tempo-adaptive dialog (2-6 lines based on session pace) with in-character term explainers. User messages referenced as a third character from the show (Richard for Silicon Valley, Johnny for Schitt's Creek, Michael for The Office, etc.).
+- **Owned TTS sidecar**: Autoclaw launches and manages the Python TTS server process directly (Pocket TTS on port 7893). Separate pip-installable package: `pip install autoclaw-theater` ([repo](https://github.com/sameeeeeeep/autoclaw-theater)). Auto-starts when theater PIP opens, auto-kills on app quit. Optional — falls back to text-only if not installed.
+- **Dialog queuing + cold opens**: New dialog arriving mid-playback is buffered (appended, not replaced) and played after the current batch finishes. A cold open (quick character quip) bridges the gap between batches so there's no silent pause.
+- **Session tempo tracking**: Tracks JSONL write cadence to classify session pace (rapid/active/relaxed/idle). Dialog turn count adapts: 2 lines during rapid exchanges, 6 lines during relaxed builds. Dialog finishes before next update arrives — no waste.
+- **Character personality templates**: Each of the 8 themes includes a full CHARACTER VOICE GUIDE — signature phrases, catchphrases, show-universe analogies, and cold open templates. Injected into the pre-prompt so Haiku writes dialog that sounds like the characters without needing a heavier model.
 - **JSONL file watcher**: Replaced 15s polling with DispatchSource file watcher on Claude Code session JSONL. 4s debounce after writes settle. Zero CPU when idle, reactive within seconds of a completed response.
 - **Liquid glass UI**: macOS 26 Tahoe `.glassEffect()` on toast + theater PIP (with fallback for older macOS). Intelligence glow on borders while Haiku generates or TTS speaks.
-- **Intent-based predictions**: Pre-prompt predicts what user will ask Claude NEXT — creative next steps, not QA tasks. Framed as natural voice commands the user would speak.
+- **Intent-based predictions**: Pre-prompt reads the user's last 2-3 messages and predicts what they'll TELL CLAUDE to build next — specific features, connections, and edge cases, not QA tasks. References actual file/feature names from the session.
 - **JSON pre-prompt format**: Haiku returns `{"predictions":[...], "dialog":[...]}` — structured JSON. Robust parser with JSON object → JSON array → A:/B: → raw line fallback chain.
-- **Persistent Haiku sessions**: Pre-prompt and enhance share a single persistent Haiku CLI session per project. Context loaded once on first call (`--session-id`), follow-ups use `--resume`. No redundant context reloading.
+- **Persistent Haiku sessions**: Pre-prompt and enhance share a single persistent Haiku CLI session per project. Context loaded once on first call (`--session-id`), follow-ups use `--resume`. Stale session auto-detection: if resume returns empty, auto-reprimes fresh. No redundant context reloading.
+- **Imperative predictions**: Pre-prompt enforces predictions as imperative commands starting with a verb (add, wire, refactor, fix). Never questions, observations, or meta-comments. BAD examples explicitly blocked.
 - **Transcribe pipeline**: Raw WhisperKit output → inject immediately at cursor → enhance in background. Pre-stop + post-stop chunk drain prevents race condition loss.
 - **Next**: OpenClaw/ClawHub lazy skill discovery, Haiku cloud routing for Analyze mode, polish + ship.
 
@@ -126,7 +130,6 @@ When Qwen flags something in Analyze mode:
 - **TheaterSprite** — 16 chibi-style character sprites across 8 themes with per-character appearance (hair, glasses, beard, accessories like lab coat/tie/armor/holographic). Shape-based renderer with animation states.
 - **TheaterScene** — 8 themed background scenes: Silicon Valley server room, Rosebud Motel, Dunder Mifflin, Central Perk, Rick's garage lab, 221B Baker Street, Breaking Bad lab, Iron Man workshop. Animated elements (portal spin, fireplace flicker, LED blink, arc reactor pulse).
 - **FrictionToastView** — detection → confirm → running → success/error states with step progress
-- **PillView & PillWindow** — status bar pill showing mode + session state
 - **TaskApprovalView** — confirm task suggestion before executing
 - **ExecutionView** — live output during execution
 - **WorkflowDetailView** — view individual saved workflows
@@ -145,8 +148,8 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 
 ## What's FULLY BUILT
 - **Theater PIP** with animated stage: 8 themed backgrounds, 16 character sprites (idle/talking/gesturing), dialogue bubbles, scrolling transcript, liquid glass, intelligence glow while TTS speaks
-- **Theater Mode** with ELI5 dialog: 2-6 line multi-turn TV character exchange (8 themes) with in-character term explainers, third-character user framing, TTS voice playback
-- **DialogVoiceService**: Owned Python TTS sidecar (Pocket TTS, port 7893), auto-launch/kill lifecycle, `/synthesize_dialogue` batch endpoint, sequential WAV playback, graceful text-only fallback
+- **Theater Mode** with ELI5 dialog: 2-6 line multi-turn TV character exchange (8 themes) with character personality templates (signature phrases, show-universe analogies, catchphrases), in-character term explainers, third-character user framing, TTS voice playback
+- **DialogVoiceService**: Owned Python TTS sidecar (`pip install autoclaw-theater`), auto-launch/kill lifecycle, dialog queuing (buffers new dialog mid-playback), cold opens (character quips bridge gaps between batches), `/synthesize_dialogue` batch endpoint, sequential WAV playback, graceful text-only fallback
 - **JSONL file watcher**: DispatchSource-based event-driven refresh (replaces 15s polling), 4s debounce
 - **Liquid glass UI**: macOS 26 `.glassEffect()` on toast with fallback, intelligence border glow while generating
 - **Transcribe mode** end-to-end: WhisperKit STT → cleanup (Qwen/Haiku/none) → inject at cursor → smart enhance (Haiku/Sonnet/none)
@@ -159,7 +162,9 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 - MCP manifest reading (CapabilityMap scans ~/.claude/mcp.json, settings.json, project settings)
 - Hotkey system (Fn, Shift, double-tap Option, Option+Z/X)
 - UnifiedToastView + FrictionToastView
-- Status bar pill with mode toggle
+- Session tempo tracking (JSONL write cadence → adaptive dialog turns)
+- Stale Haiku session detection + auto-reprime
+- Imperative prediction enforcement (verb-first commands only)
 - Panel: Home, Workflows, Threads, Settings — all tabs complete with mode selector in sidebar
 - OAuth flow via autoclawd
 - OllamaService HTTP client for Qwen + Ollama health check on startup
@@ -185,8 +190,10 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 
 ## Key Decisions
 - Theater PIP as separate floating window: animated stage with sprites/backgrounds lives in its own PIP, persists independently from toast. Only dismisses on explicit user action or session end (2026-03-29)
-- Owned TTS sidecar: Autoclaw launches Python TTS server directly from TTSSidecar/server.py + venv. No dependency on SiliconValley Theater app. Process managed by DialogVoiceService, killed on app quit (2026-03-29)
-- Intent-based predictions: pre-prompt predicts creative next steps user would ask Claude, not QA/test tasks. Good/bad examples in prompt guide Haiku (2026-03-29)
+- Owned TTS sidecar as separate pip package: `pip install autoclaw-theater` — Autoclaw searches PATH for CLI first, falls back to server.py in known dirs. Process managed by DialogVoiceService, killed on app quit (2026-03-29)
+- Dialog queuing: new dialog arriving mid-playback is buffered, played after current batch. Cold open (random character quip from theme templates) bridges the gap — no silent pause between batches (2026-03-29)
+- Character personality templates: each theme includes CHARACTER VOICE GUIDE with signature phrases, catchphrases, show-universe analogies, and cold open quips. Injected into Haiku pre-prompt as tone guardrails — character voice without heavier model (2026-03-29)
+- Intent-based predictions: pre-prompt reads user's last 2-3 messages, predicts what they'll TELL Claude to build next — specific features/files/connections from session context, not QA tasks (2026-03-29)
 - Theater mode as optional toggle: ELI5 dialog + TTS are opt-in, TTSSidecar is optional — falls back to text-only if not found (2026-03-29)
 - JSONL file watcher replaces 15s poll: DispatchSource on session file + 4s debounce — zero CPU when idle, reactive on writes (2026-03-29)
 - Liquid glass (.glassEffect) on macOS 26 with solid background fallback for older macOS (2026-03-29)
@@ -195,6 +202,12 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 - Third-character framing: user messages referenced as show character (Richard, Johnny, Michael, etc.) — dialog stays between 2 main characters only (2026-03-29)
 - DialogVoiceService calls SiliconValley TTS sidecar batch endpoint — graceful text-only fallback if sidecar not running (2026-03-29)
 - Predictions now factor full conversation history (user + Claude messages), not just project context (2026-03-29)
+- Session tempo tracking: JSONL write cadence → adaptive dialog turns (rapid=2, active=4, relaxed=6, idle=3) — dialog finishes before next update, no waste (2026-03-29)
+- Stale Haiku session auto-detection: if --resume returns empty, reset and re-prime from scratch (2026-03-29)
+- Imperative prediction enforcement: predictions must start with a verb, never questions or observations (2026-03-29)
+- Dialog append-only: new dialog lines appended to sessionDialog, never replaced — prevents TTS interruption mid-playback (2026-03-29)
+- Theater PIP persistent content: window content set once via SwiftUI @ObservedObject, not recreated on every update (2026-03-29)
+- PillView/PillWindow removed: status widget was deprecated, shared code (GlowState, intelligenceGlow, FlowLayout) moved to AutoclawTheme.swift (2026-03-29)
 - ELI5 dialog piggybacked on pre-prompt: single Haiku call returns both predictions + character dialog, zero extra latency (2026-03-29)
 - 8 dialog themes matching SiliconValley Theater character pairs, configurable in Settings (2026-03-29)
 - Haiku returns JSON object `{"predictions":[...], "dialog":[...]}` — more reliable than A:/B: text format, parser has 4-level fallback chain (2026-03-29)
@@ -220,9 +233,9 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 3. **Polish + ship** — thelastprompt.ai is ready
 
 ## Tech Stack
-Swift 6.3 + SwiftUI, SPM (Package.swift), WhisperKit (base.en, Core ML), NSStatusItem pill, toast cards, NSPanel side panel, SQLite/GRDB, launchd, SKILL.md OpenClaw registry, macOS 14+, Ollama (Qwen 2.5 3B)
+Swift 6.3 + SwiftUI, SPM (Package.swift), WhisperKit (base.en, Core ML), NSStatusItem, toast cards, NSPanel side panel, SQLite/GRDB, launchd, SKILL.md OpenClaw registry, macOS 14+, Ollama (Qwen 2.5 3B)
 
-## File Inventory (54 files)
+## File Inventory (52 files)
 **Core:** App.swift, AppDelegate.swift, AppState.swift
 **Voice:** VoiceService.swift, WhisperKitService.swift, TranscribeService.swift, CursorInjector.swift, DialogVoiceService.swift
 **Theater:** TheaterPIPView.swift, TheaterPIPWindow.swift, TheaterSprite.swift, TheaterScene.swift
@@ -231,7 +244,7 @@ Swift 6.3 + SwiftUI, SPM (Package.swift), WhisperKit (base.en, Core ML), NSStatu
 **MCP:** CapabilityMap.swift, CapabilityDiscovery.swift
 **Task:** TaskDeductionService.swift, TaskSuggestion.swift, ClaudeCodeRunner.swift
 **Learn:** WorkflowRecorder.swift, WorkflowExtractor.swift, WorkflowSkillTemplate.swift, LearnMode.swift
-**UI:** MainPanelView.swift, MainPanelWindow.swift, UnifiedToastView.swift, FrictionToastView.swift, TaskApprovalView.swift, ExecutionView.swift, WorkflowDetailView.swift, SettingsView.swift, PillView.swift, PillWindow.swift, ToastWindow.swift
+**UI:** MainPanelView.swift, MainPanelWindow.swift, UnifiedToastView.swift, FrictionToastView.swift, TaskApprovalView.swift, ExecutionView.swift, WorkflowDetailView.swift, SettingsView.swift, ToastWindow.swift
 **Data:** SessionThread.swift, Project.swift, ProjectStore.swift, PreloadedTemplates.swift, Settings.swift
 **Util:** GlobalHotkeyMonitor.swift, AutoclawTheme.swift, LogoImage.swift, WebAppResolver.swift, DebugLog.swift, OllamaService.swift
 

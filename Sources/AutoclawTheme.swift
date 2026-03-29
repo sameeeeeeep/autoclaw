@@ -220,6 +220,79 @@ extension Color {
     }
 }
 
+// MARK: - Glow State
+
+enum GlowState: Equatable { case off, enabled, thinking }
+
+// MARK: - Intelligence Glow
+
+private struct EnabledGlow: View {
+    let color: Color; let cornerRadius: CGFloat
+    @State private var opacity: Double = 0.15
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .strokeBorder(color.opacity(opacity), lineWidth: 1.5).blur(radius: 3).allowsHitTesting(false)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .onAppear { withAnimation(.easeInOut(duration: 2.6).repeatForever(autoreverses: true)) { opacity = 0.40 } }
+    }
+}
+
+private struct ThinkingGlow: View {
+    let color: Color; let cornerRadius: CGFloat
+    @State private var stops: [Gradient.Stop]
+    init(color: Color, cornerRadius: CGFloat) { self.color = color; self.cornerRadius = cornerRadius; _stops = State(initialValue: Self.makeStops(color: color)) }
+    var body: some View {
+        let g = AngularGradient(gradient: Gradient(stops: stops), center: .center)
+        let s = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        ZStack {
+            s.strokeBorder(g, lineWidth: 1.5).animation(.easeInOut(duration: 0.90), value: stops)
+            s.strokeBorder(g, lineWidth: 3).blur(radius: 2).animation(.easeInOut(duration: 1.15), value: stops)
+            s.strokeBorder(g, lineWidth: 5).blur(radius: 4).animation(.easeInOut(duration: 1.45), value: stops)
+        }.allowsHitTesting(false)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .task { while !Task.isCancelled { try? await Task.sleep(for: .seconds(0.75)); stops = Self.makeStops(color: color) } }
+    }
+    static func makeStops(color: Color) -> [Gradient.Stop] {
+        [color.opacity(0.95), color.opacity(0.20), color.opacity(0.60), color.opacity(0.88), color.opacity(0.16), color.opacity(0.72)]
+            .map { Gradient.Stop(color: $0, location: Double.random(in: 0...1)) }.sorted { $0.location < $1.location }
+    }
+}
+
+private struct GlowMod: ViewModifier {
+    let color: Color; let cornerRadius: CGFloat; let glowState: GlowState
+    func body(content: Content) -> some View {
+        content.overlay {
+            switch glowState {
+            case .off: EmptyView()
+            case .enabled: EnabledGlow(color: color, cornerRadius: cornerRadius)
+            case .thinking: ThinkingGlow(color: color, cornerRadius: cornerRadius)
+            }
+        }
+    }
+}
+
+extension View {
+    func intelligenceGlow(color: Color, cornerRadius: CGFloat = 20, state: GlowState) -> some View {
+        modifier(GlowMod(color: color, cornerRadius: cornerRadius, glowState: state))
+    }
+}
+
+// MARK: - Flow Layout
+
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize { arrange(proposal: proposal, subviews: subviews).size }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let r = arrange(proposal: proposal, subviews: subviews)
+        for (i, p) in r.positions.enumerated() { subviews[i].place(at: CGPoint(x: bounds.minX + p.x, y: bounds.minY + p.y), proposal: .unspecified) }
+    }
+    private func arrange(proposal: ProposedViewSize, subviews: Subviews) -> (positions: [CGPoint], size: CGSize) {
+        let mw = proposal.width ?? .infinity; var ps: [CGPoint] = []; var x: CGFloat = 0; var y: CGFloat = 0; var rh: CGFloat = 0
+        for sv in subviews { let s = sv.sizeThatFits(.unspecified); if x + s.width > mw && x > 0 { x = 0; y += rh + spacing; rh = 0 }; ps.append(CGPoint(x: x, y: y)); rh = max(rh, s.height); x += s.width + spacing }
+        return (ps, CGSize(width: mw, height: y + rh))
+    }
+}
+
 // MARK: - Environment Key
 
 private struct ThemeKey: EnvironmentKey {

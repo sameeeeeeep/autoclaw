@@ -16,23 +16,68 @@ final class DialogVoiceService: ObservableObject {
     private var sidecarProcess: Process?
     private var launchTask: Task<Void, Never>?
 
+    /// Queued dialog — buffered when new dialog arrives mid-playback.
+    /// Played automatically after the current batch finishes.
+    private var dialogQueue: [(lines: [DialogLine], theme: DialogTheme)] = []
+    private var isPlayingBatch = false
+    private var lastColdOpenIndex: Int = -1
+
     private static let sidecarBase = "http://127.0.0.1:7893"
     private static let port = 7893
 
     // MARK: - Public
 
     /// Speak dialog lines in sequence using character voices from the TTS sidecar.
-    /// Non-blocking — fires and forgets. Cancels any in-progress playback.
+    /// If currently speaking, queues the new dialog and injects a cold open to bridge the gap.
+    /// Non-blocking — fires and forgets.
     func speak(_ lines: [DialogLine], theme: DialogTheme) {
+        guard !lines.isEmpty else { return }
+        DebugLog.log("[TTS] speak() called — \(lines.count) lines, theme: \(theme.id), isPlayingBatch: \(isPlayingBatch)")
+
+        if isPlayingBatch {
+            // Currently speaking — queue this batch for after the current one finishes
+            dialogQueue.append((lines: lines, theme: theme))
+            DebugLog.log("[TTS] Queued \(lines.count) lines (queue depth: \(dialogQueue.count))")
+            return
+        }
+
+        startBatch(lines: lines, theme: theme)
+    }
+
+    /// Stop any in-progress playback and clear the queue
+    func stop() {
+        dialogQueue.removeAll()
+        playbackTask?.cancel()
+        playbackTask = nil
+        isPlayingBatch = false
+        stopPlayback()
+    }
+
+    // MARK: - Batch Playback
+
+    private func startBatch(lines: [DialogLine], theme: DialogTheme) {
         playbackTask?.cancel()
         stopPlayback()
 
-        guard !lines.isEmpty else { return }
+        isPlayingBatch = true
+        DebugLog.log("[TTS] startBatch — \(lines.count) lines, sidecarReady: \(sidecarReady)")
 
         playbackTask = Task { @MainActor in
+            defer {
+                isPlayingBatch = false
+                // Check for queued dialog — play next batch if available
+                drainQueue()
+            }
+
             // Ensure sidecar is up before trying to synthesize
             if !sidecarReady {
+                DebugLog.log("[TTS] Waiting for sidecar...")
                 await waitForSidecar(timeout: 10)
+                DebugLog.log("[TTS] Sidecar wait done — ready: \(sidecarReady)")
+                guard sidecarReady else {
+                    DebugLog.log("[TTS] Sidecar not ready after wait, skipping batch")
+                    return
+                }
             }
 
             // Map dialog lines to TTS turns with correct voice IDs
@@ -41,27 +86,64 @@ final class DialogVoiceService: ObservableObject {
                 return (text: line.line, voiceID: voiceID)
             }
 
+            DebugLog.log("[TTS] Synthesizing \(turns.count) turns: \(turns.map { "\($0.voiceID): \($0.text.prefix(30))" })")
+
             // Batch synthesize via sidecar
             let audioChunks = await synthesizeDialogue(turns: turns)
 
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                DebugLog.log("[TTS] Batch cancelled after synthesis")
+                return
+            }
+
+            let validChunks = audioChunks.compactMap { $0 }.count
+            DebugLog.log("[TTS] Got \(validChunks)/\(audioChunks.count) audio chunks, playing...")
 
             // Play each chunk sequentially
             isSpeaking = true
-            for chunk in audioChunks {
+            for (i, chunk) in audioChunks.enumerated() {
                 guard !Task.isCancelled else { break }
-                guard let data = chunk else { continue }
+                guard let data = chunk else {
+                    DebugLog.log("[TTS] Chunk \(i) was nil, skipping")
+                    continue
+                }
                 await playAndWait(data: data)
             }
             isSpeaking = false
+            DebugLog.log("[TTS] Batch playback finished")
         }
     }
 
-    /// Stop any in-progress playback
-    func stop() {
-        playbackTask?.cancel()
-        playbackTask = nil
-        stopPlayback()
+    /// Drain the queue — if there's a queued batch, inject a cold open then play it.
+    private func drainQueue() {
+        guard !dialogQueue.isEmpty else { return }
+
+        let next = dialogQueue.removeFirst()
+
+        // Inject a cold open to bridge the gap between batches (10-15s of character banter)
+        let coldOpen = pickColdOpen(theme: next.theme)
+        var linesWithBridge = [DialogLine]()
+        if let cold = coldOpen {
+            linesWithBridge.append(cold)
+        }
+        linesWithBridge.append(contentsOf: next.lines)
+
+        DebugLog.log("[TTS] Draining queue — playing next batch (\(linesWithBridge.count) lines, \(dialogQueue.count) remaining)")
+        startBatch(lines: linesWithBridge, theme: next.theme)
+    }
+
+    /// Pick a random cold open line from the theme's template, avoiding repeats.
+    private func pickColdOpen(theme: DialogTheme) -> DialogLine? {
+        guard !theme.coldOpens.isEmpty else { return nil }
+        var idx: Int
+        repeat {
+            idx = Int.random(in: 0..<theme.coldOpens.count)
+        } while idx == lastColdOpenIndex && theme.coldOpens.count > 1
+        lastColdOpenIndex = idx
+
+        // Alternate which character delivers the cold open
+        let char = idx % 2 == 0 ? theme.char1 : theme.char2
+        return DialogLine(character: char, line: theme.coldOpens[idx])
     }
 
     /// Check if the TTS sidecar is reachable
@@ -94,41 +176,84 @@ final class DialogVoiceService: ObservableObject {
                 return
             }
 
-            // Find the TTSSidecar directory
-            let searchPaths = [
-                Bundle.main.bundlePath + "/../TTSSidecar",
-                NSHomeDirectory() + "/Documents/Claude Code/SiliconValley/TTSSidecar",
-                NSHomeDirectory() + "/Documents/Claude Code/Autoclaw/TTSSidecar",
+            // Strategy 1: Check if `autoclaw-theater` CLI is installed (pip install autoclaw-theater)
+            let pipCLIPaths = [
+                NSHomeDirectory() + "/.local/bin/autoclaw-theater",
+                "/usr/local/bin/autoclaw-theater",
+                "/opt/homebrew/bin/autoclaw-theater",
             ]
 
-            var sidecarDir: String?
-            for path in searchPaths {
-                let serverPath = path + "/server.py"
-                if FileManager.default.fileExists(atPath: serverPath) {
-                    sidecarDir = path
+            var pipCLI: String?
+            for path in pipCLIPaths {
+                if FileManager.default.fileExists(atPath: path) {
+                    pipCLI = path
                     break
                 }
             }
 
-            guard let dir = sidecarDir else {
-                DebugLog.log("[TTS] server.py not found in any search path — voice disabled")
-                DebugLog.log("[TTS] Searched: \(searchPaths)")
-                launchTask = nil
-                return
+            // Also check if it's on PATH via `which`
+            if pipCLI == nil {
+                let which = Process()
+                which.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                which.arguments = ["which", "autoclaw-theater"]
+                let whichPipe = Pipe()
+                which.standardOutput = whichPipe
+                which.standardError = Pipe()
+                try? which.run()
+                which.waitUntilExit()
+                if which.terminationStatus == 0,
+                   let out = String(data: whichPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !out.isEmpty {
+                    pipCLI = out
+                }
             }
 
-            let serverScript = dir + "/server.py"
-            let venvPython = dir + "/.venv/bin/python3"
-
-            // Prefer venv Python (has all deps installed), fall back to system
             let pythonPath: String
             let args: [String]
-            if FileManager.default.fileExists(atPath: venvPython) {
-                pythonPath = venvPython
-                args = [serverScript, "--port", "\(Self.port)", "--engine", "pocket"]
+            var workDir: String = NSHomeDirectory()
+
+            if let cli = pipCLI {
+                // pip-installed: use the entry point directly
+                pythonPath = cli
+                args = ["--port", "\(Self.port)", "--engine", "pocket"]
+                DebugLog.log("[TTS] Found pip-installed sidecar: \(cli)")
             } else {
-                pythonPath = "/usr/bin/env"
-                args = ["python3", serverScript, "--port", "\(Self.port)", "--engine", "pocket"]
+                // Strategy 2: Fall back to server.py in known directories
+                let searchPaths = [
+                    Bundle.main.bundlePath + "/../TTSSidecar",
+                    NSHomeDirectory() + "/Documents/Claude Code/autoclaw-theater/autoclaw_theater",
+                    NSHomeDirectory() + "/Documents/Claude Code/SiliconValley/TTSSidecar",
+                    NSHomeDirectory() + "/Documents/Claude Code/Autoclaw/TTSSidecar",
+                ]
+
+                var sidecarDir: String?
+                for path in searchPaths {
+                    let serverPath = path + "/server.py"
+                    if FileManager.default.fileExists(atPath: serverPath) {
+                        sidecarDir = path
+                        break
+                    }
+                }
+
+                guard let dir = sidecarDir else {
+                    DebugLog.log("[TTS] Sidecar not found — install via: pip install autoclaw-theater")
+                    DebugLog.log("[TTS] Also searched directories: \(searchPaths)")
+                    launchTask = nil
+                    return
+                }
+
+                workDir = dir
+                let serverScript = dir + "/server.py"
+                let venvPython = dir + "/.venv/bin/python3"
+
+                // Prefer venv Python (has all deps installed), fall back to system
+                if FileManager.default.fileExists(atPath: venvPython) {
+                    pythonPath = venvPython
+                    args = [serverScript, "--port", "\(Self.port)", "--engine", "pocket"]
+                } else {
+                    pythonPath = "/usr/bin/env"
+                    args = ["python3", serverScript, "--port", "\(Self.port)", "--engine", "pocket"]
+                }
             }
 
             DebugLog.log("[TTS] Starting sidecar: \(pythonPath) \(args.joined(separator: " "))")
@@ -136,7 +261,7 @@ final class DialogVoiceService: ObservableObject {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: pythonPath)
             process.arguments = args
-            process.currentDirectoryURL = URL(fileURLWithPath: dir)
+            process.currentDirectoryURL = URL(fileURLWithPath: workDir)
 
             // Capture stdout/stderr for debugging
             let pipe = Pipe()
@@ -221,11 +346,13 @@ final class DialogVoiceService: ObservableObject {
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
             let (data, resp) = try await URLSession.shared.data(for: request)
-            guard (resp as? HTTPURLResponse)?.statusCode == 200,
+            let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            guard statusCode == 200,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let audioList = json["audio"] as? [String?]
             else {
-                DebugLog.log("[TTS] Sidecar returned non-200 or bad JSON")
+                let body = String(data: data.prefix(500), encoding: .utf8) ?? "<binary>"
+                DebugLog.log("[TTS] Sidecar error — status: \(statusCode), body: \(body)")
                 return Array(repeating: nil, count: turns.count)
             }
 

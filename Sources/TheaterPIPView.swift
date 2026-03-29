@@ -315,16 +315,28 @@ struct TheaterPIPView: View {
         let count = transcribeService.sessionDialog.count
         guard count > 0 else { return }
 
-        // When new dialog arrives, start cycling through lines
         if activeLineIndex < 0 {
+            // First dialog ever — start from line 0
             activeLineIndex = 0
             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                 displayedLineIndex = 0
             }
             scheduleNextLine()
-        } else if activeLineIndex < count - 1 {
-            // More lines added — will be picked up by the scheduled advance
+        } else if activeLineIndex >= count - 1 || !transcribeService.dialogVoice.isSpeaking {
+            // New lines were appended and we're done with the old batch (or not speaking).
+            // Jump to the start of the newly appended lines and cycle from there.
+            // The new lines start right after the old activeLineIndex.
+            let nextStart = activeLineIndex + 1
+            if nextStart < count {
+                activeLineIndex = nextStart
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    displayedLineIndex = nextStart
+                }
+                scheduleNextLine()
+            }
+            // else: no new lines to show, scheduled advance will handle naturally
         }
+        // else: still cycling through current batch — scheduled advance picks up appended lines
     }
 
     private func scheduleNextLine() {

@@ -51,7 +51,7 @@ Mic → WhisperKit (local, Neural Engine) → inject raw at cursor → Smart Enh
 
 **Pre-prompt predictions:** When the toast opens, a persistent Haiku session reads your project context (CLAUDE.md, README) and active Claude Code session history, then predicts the two most likely things you'll say next. Predictions auto-refresh via JSONL file watcher — event-driven, not polled. Tap a suggestion to inject it directly.
 
-**Theater Mode** (optional): A floating Picture-in-Picture window with an animated stage — themed background scenes, chibi-style character sprites with idle/talking/gesturing animations, and dialogue bubbles. TV characters explain what's happening in your session ELI5-style with in-character term explainers. 2-6 lines of dialog depending on session activity. Your messages are referenced as a third character from the show (Richard in Silicon Valley, Michael in The Office, etc.). Autoclaw manages the TTS sidecar directly — it launches the Python server (Pocket TTS, port 7893) automatically when theater mode is active and kills it on quit. Falls back to text-only if the TTSSidecar directory isn't installed. Choose from 8 character pairs: Gilfoyle & Dinesh, David & Moira, Dwight & Jim, Chandler & Joey, Rick & Morty, Sherlock & Watson, Jesse & Walter, or Tony & JARVIS.
+**Theater Mode** (optional): A floating Picture-in-Picture window with an animated stage — themed background scenes, chibi-style character sprites with idle/talking/gesturing animations, and dialogue bubbles. TV characters explain what's happening in your session ELI5-style with in-character term explainers. Dialog length adapts to session tempo — 2 lines during rapid exchanges, up to 6 during relaxed builds — so dialog finishes before the next update arrives. Your messages are referenced as a third character from the show (Richard in Silicon Valley, Michael in The Office, etc.). Each theme includes a CHARACTER VOICE GUIDE with signature phrases, catchphrases, and show-universe analogies injected into the pre-prompt. Autoclaw manages the TTS sidecar directly — it launches the Python server (Pocket TTS, port 7893) automatically when theater mode is active and kills it on quit. Falls back to text-only if the sidecar isn't installed (`pip install autoclaw-theater`). Choose from 8 character pairs: Gilfoyle & Dinesh, David & Moira, Dwight & Jim, Chandler & Joey, Rick & Morty, Sherlock & Watson, Jesse & Walter, or Tony & JARVIS.
 
 **Smart Enhance** (post-injection, non-blocking) — context-aware rewrite using the same Haiku session. Proactively adds specific details from project/session context. Configurable: Haiku / Sonnet / none.
 
@@ -149,9 +149,26 @@ make dmg        # create distributable DMG
 | | |
 |---|---|
 | **Ollama + Qwen 2.5 3B** | `ollama pull qwen2.5:3b` — local bouncer for Analyze mode + transcript cleanup |
-| **TTSSidecar** | Theater mode voice playback — Pocket TTS Python server. Autoclaw auto-launches it. Install: clone [SiliconValley Theater](https://github.com/sameeeeeeep/siliconvalley), run `cd TTSSidecar && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt` |
+| **Autoclaw Theater** | Theater mode voice playback — see [Theater Mode setup](#theater-mode-setup) below |
 | **Chrome extension** | Load unpacked from `ChromeExtension/` for richer Learn mode |
 | **Screen Recording** | Screen capture for key frame analysis + enhance context |
+
+### Theater Mode Setup (Optional)
+
+Theater Mode shows a floating PIP window where TV characters explain your coding session ELI5-style. **Text-only dialog works out of the box** — no extra install needed. To add **character voices**:
+
+```bash
+# 1. Install the TTS voice server (Python 3.10+ required)
+pip install autoclaw-theater
+
+# 2. That's it — Autoclaw auto-launches the voice server when Theater Mode is active
+```
+
+In Autoclaw **Settings → Theater Mode**, toggle it on and pick a character pair (Gilfoyle & Dinesh, David & Moira, etc.).
+
+> **First run note:** The first `pip install` downloads ~500MB of model weights (Pocket TTS + torch). This happens once. If you see text dialogs but no audio, check that `autoclaw-theater` is on your PATH: `which autoclaw-theater`.
+
+[Autoclaw Theater repo →](https://github.com/sameeeeeeep/autoclaw-theater)
 
 ---
 

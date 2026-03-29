@@ -23,8 +23,24 @@ final class TheaterPIPWindow: NSPanel {
     }
 
     private var hosting: TheaterFirstMouseHostingView?
+    private var hasContent = false
 
     func show(with view: some View) {
+        if hasContent {
+            // Already showing — just ensure visible, don't recreate the view hierarchy.
+            // SwiftUI @ObservedObject reactivity handles content updates.
+            if !isVisible {
+                alphaValue = 0
+                makeKeyAndOrderFront(nil)
+                level = .floating
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.25
+                    animator().alphaValue = 1
+                }
+            }
+            return
+        }
+
         let hostingView = TheaterFirstMouseHostingView(rootView: AnyView(view))
 
         let effect = TheaterFirstMouseVisualEffectView()
@@ -45,6 +61,7 @@ final class TheaterPIPWindow: NSPanel {
 
         contentView = effect
         hosting = hostingView
+        hasContent = true
 
         // Force layout to get intrinsic size
         hostingView.layoutSubtreeIfNeeded()
@@ -93,6 +110,9 @@ final class TheaterPIPWindow: NSPanel {
         }, completionHandler: {
             self.orderOut(nil)
             self.alphaValue = 1
+            self.hasContent = false
+            self.hosting = nil
+            self.contentView = nil
         })
     }
 

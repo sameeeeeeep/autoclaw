@@ -5,7 +5,6 @@ import Combine
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var pillWindow: PillWindow!
     private var mainPanelWindow: MainPanelWindow!
     private var toastWindow: ToastWindow!
     private var projectPickerWindow: ToastWindow!
@@ -26,7 +25,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DebugLog.clear()
         DebugLog.log("[App] Launch started")
         setupMenuBar()
-        setupPillWindow()
         setupMainPanel()
         setupToastWindows()
         setupHotkey()
@@ -87,9 +85,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "Toggle Panel", action: #selector(togglePanel), keyEquivalent: "")
 
-        let widgetTitle = pillWindow.isVisible ? "Hide Widget" : "Show Widget"
-        menu.addItem(withTitle: widgetTitle, action: #selector(toggleWidget), keyEquivalent: "")
-
         menu.addItem(.separator())
         if appState.sessionActive {
             let sessionItem = NSMenuItem(title: "Session: \(appState.currentSessionId?.prefix(8) ?? "active")…", action: nil, keyEquivalent: "")
@@ -110,19 +105,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func endSession() { appState.endSession() }
     @objc private func startSession() { appState.startSession() }
     @objc private func quitApp() { NSApp.terminate(nil) }
-
-    @objc private func toggleWidget() {
-        if pillWindow.isVisible {
-            pillWindow.orderOut(nil)
-        } else {
-            pillWindow.orderFront(nil)
-        }
-    }
-
-    private func setupPillWindow() {
-        pillWindow = PillWindow(appState: appState)
-        // Don't show by default — toggle via menu bar
-    }
 
     private func setupMainPanel() {
         mainPanelWindow = MainPanelWindow(appState: appState)
