@@ -2,251 +2,234 @@
   <img src="assets/logo.png" width="140" alt="Autoclaw logo" />
 </p>
 
-<h1 align="center">Autoclaw</h1>
+<h1 align="center">autoclaw</h1>
 
 <p align="center">
-  <strong>Ambient AI for macOS — voice-to-text everywhere, workflow automation, and an intelligence layer at the OS level.</strong>
-</p>
-
-<p align="center">
-  <a href="#transcribe-mode">Transcribe</a> &nbsp;·&nbsp;
-  <a href="#analyze-mode">Analyze</a> &nbsp;·&nbsp;
-  <a href="#task-mode">Task</a> &nbsp;·&nbsp;
-  <a href="#learn-mode">Learn</a> &nbsp;·&nbsp;
-  <a href="#setup">Setup</a>
+  <strong>Voice-first vibe coding for Claude Code.<br/>It watches your session, predicts your next command, and lets you speak it into existence.</strong>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%2014%2B-blue" />
-  <img src="https://img.shields.io/badge/language-Swift%206-orange" />
+  <img src="https://img.shields.io/badge/Swift%206-orange?logo=swift&logoColor=white" />
   <img src="https://img.shields.io/badge/license-MIT-green" />
   <img src="https://img.shields.io/badge/status-alpha-yellow" />
 </p>
 
----
-
-## The Problem
-
-Every AI tool today lives *inside* an app. You copy context out, paste it into a chatbot, figure out the right prompt, get a result, then carry it back.
-
-**The human is the integration layer. The human is the bottleneck.**
-
-Autoclaw flips this. It operates at the **OS level** — watching what you do, understanding context, and acting on your behalf. You never switch to it. It's already there.
-
-Built by [The Last Prompt](https://thelastprompt.ai) — mission: write the last prompt.
+<p align="center">
+  <!-- TODO: Replace with GIF — Fn → prediction cards → speak → text injected → Claude executes -->
+  <em>[ demo GIF: Fn → see prediction → speak → Claude Code runs it ]</em>
+</p>
 
 ---
 
-## Four Modes
+You're vibe coding. Claude just finished wiring up a new component. You already know what comes next — connect it, handle the edge case, move to the next feature. Instead of typing it out:
 
-Cycle modes with **Right Shift**. Start/stop with **Fn**. Dismiss with **double-tap Left Option**.
+**Fn.** Two prediction cards appear — autoclaw already read your session and knows what you'll likely say. Tap one. Or speak your own command. Clean, specific text lands at your cursor. Claude picks it up and runs.
 
-### Transcribe Mode — "I'll type what you say"
+You never typed a character. You never broke flow.
 
-The primary feature. Speak anywhere, raw text appears at your cursor immediately, then a smarter version is offered in background.
+That's autoclaw — a **native macOS companion for Claude Code** that turns your voice into the interface. It reads your CLAUDE.md, watches your live session via JSONL, tracks your tempo, and predicts what you'll build next. When you speak, it enhances your words with the exact file names, function names, and context from your session.
 
-```
-Mic → WhisperKit (local, Neural Engine) → inject raw at cursor → Smart Enhance (background, non-blocking)
-```
+Vibe coding, but hands-free.
 
-**Pre-prompt predictions:** When the toast opens, a persistent Haiku session reads your project context (CLAUDE.md, README) and active Claude Code session history, then predicts the two most likely things you'll say next. Predictions auto-refresh via JSONL file watcher — event-driven, not polled. Tap a suggestion to inject it directly.
-
-**Theater Mode** (optional): A floating Picture-in-Picture window with an animated stage — themed background scenes, chibi-style character sprites with idle/talking/gesturing animations, and dialogue bubbles. TV characters explain what's happening in your session ELI5-style with in-character term explainers. Dialog length adapts to session tempo — 2 lines during rapid exchanges, up to 6 during relaxed builds — so dialog finishes before the next update arrives. Your messages are referenced as a third character from the show (Richard in Silicon Valley, Michael in The Office, etc.). Each theme includes a CHARACTER VOICE GUIDE with signature phrases, catchphrases, and show-universe analogies injected into the pre-prompt. Autoclaw manages the TTS sidecar directly — it launches the Python server (Pocket TTS, port 7893) automatically when theater mode is active and kills it on quit. Falls back to text-only if the sidecar isn't installed (`pip install autoclaw-theater`). Choose from 8 character pairs: Gilfoyle & Dinesh, David & Moira, Dwight & Jim, Chandler & Joey, Rick & Morty, Sherlock & Watson, Jesse & Walter, or Tony & JARVIS.
-
-**Smart Enhance** (post-injection, non-blocking) — context-aware rewrite using the same Haiku session. Proactively adds specific details from project/session context. Configurable: Haiku / Sonnet / none.
-
-**STT Engine:** WhisperKit (base.en, Neural Engine, local) with Apple SFSpeech as fallback. Background chunk transcription every ~25s with hallucination filtering and pre-stop/post-stop drain to prevent chunk loss.
-
-**UI:** Liquid glass effect on macOS 26 Tahoe (solid background fallback on older macOS). Intelligence border glow while Haiku generates predictions or TTS speaks.
-
-### Analyze Mode — "I'll watch, you work"
-
-Passive autopilot. Watches what you do, matches against known workflows, offers to help.
-
-**Two-brain detection:**
-1. **Qwen 2.5 3B** (local, Ollama) — the bouncer. Filters sensor data. Event-driven, 60s cooldown, 20/hr cap.
-2. **Haiku** (cloud) — the concierge. Routes to: pre-loaded templates → installed MCP tools → custom Claude solution.
-
-### Task Mode — "Do this for me"
-
-Direct execution. Copy text or speak a task, Claude handles it with project context and all your MCP tools.
-
-### Learn Mode — "Watch me do this once"
-
-Records your actions, sends to Claude to extract a reusable workflow. Saved workflows become matchable in Analyze mode.
+Built by [The Last Prompt](https://thelastprompt.ai).
 
 ---
 
-## Architecture
+## Why this exists
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  SENSORS (always on, all output TEXT)                        │
-│                                                             │
-│  ActiveWindow ─→ app name, window title, URL                │
-│  Clipboard ────→ copied text + source app                   │
-│  ScreenOCR ────→ UI labels (~150 chars, cursor-ranked)      │
-│  BrowserBridge → Chrome extension DOM events (WebSocket)    │
-│  KeyFrame ─────→ Neural Engine embeddings gate OCR          │
-│  ScreenCapture → rolling frame buffer + click monitoring    │
-│  FileActivity ─→ FS event monitoring                        │
-│  Voice ────────→ WhisperKit (base.en) / Apple Speech        │
-└────────────────────┬────────────────────────────────────────┘
-                     │  60s rolling text buffer
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│  QWEN 2.5 3B (local, Ollama) — THE BOUNCER                  │
-│  Event-driven. 60s cooldown. 20/hr cap. 5s debounce.        │
-│  "Is something actionable happening?" → yes/no               │
-└────────────────────┬────────────────────────────────────────┘
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│  HAIKU (cloud) — THE CONCIERGE                               │
-│  Routing: templates → MCP tools → Claude custom              │
-└────────────────────┬────────────────────────────────────────┘
-                     │  user taps toast → approve
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│  CLAUDE (cloud) — THE BRAIN                                  │
-│  Executes via Claude Code CLI + MCP servers                  │
-│  Three-gate security: detect → plan → execute                │
-└─────────────────────────────────────────────────────────────┘
-```
+Vibe coding with Claude Code is fast — until you have to type. You're in flow, Claude just shipped a feature, and now you need to describe the next thing. You type it out, context-switch from thinking to writing, lose the thread.
 
-### Why Claude Code CLI?
+Autoclaw removes the typing. It sits at the OS level, watches your Claude Code session in real-time, and gives you two things:
 
-Autoclaw spawns **Claude Code CLI sessions** — every MCP server in `~/.claude/mcp.json` is automatically available. File system, git, code execution, all built in. No API key management per tool.
+1. **Predictions** — before you even speak, it shows what you'll probably say next
+2. **Voice** — when you do speak, it enhances your words with session context and injects them at your cursor
+
+The result: you think it, you say it, Claude builds it. No friction between your brain and the AI.
 
 ---
 
-## Setup
+## How it works
 
-### Install from DMG
+```
+                    ┌─────────────────────────────┐
+                    │  Your Claude Code session    │
+                    │  (JSONL file watcher)         │
+                    └──────────┬──────────────────┘
+                               │ reads live
+                               ▼
+Fn ──→ Toast appears ──→ 2 prediction cards (tap to use)
+       Mic is live           ↑ auto-refresh as session progresses
+           │
+           ▼
+       You speak naturally
+           │
+           ▼
+   WhisperKit (local, Neural Engine)
+           │
+           ├──→ Raw text injected at cursor INSTANTLY
+           │
+           └──→ Smart Enhance (background)
+                 adds file names, function names,
+                 project context from your session
+                 ↓
+                 enhanced version offered — accept or keep raw
+```
 
-Download `Autoclaw.dmg` from releases, drag to Applications, right-click → Open on first launch.
+### The prediction engine
 
-### Build from source
+This is the core magic. When you press Fn, a persistent Haiku session reads:
+
+- Your **CLAUDE.md** — project architecture, file inventory, current focus
+- Your **live Claude Code session** — every message, tool call, file edit, error
+- Your **session tempo** — how fast you're going (rapid/active/relaxed)
+
+Then it predicts the **two most likely things you'll tell Claude to build next**. Not generic suggestions — specific commands with real file names and feature names from your session:
+
+> *"wire the new sprite animations to the dialog state in TheaterPIPView"*
+> *"add error handling for when the TTS sidecar fails to connect on port 7893"*
+
+Predictions refresh automatically via a JSONL file watcher — event-driven, zero CPU when idle, reactive within seconds of Claude finishing a response. No polling.
+
+### Smart enhance
+
+When you speak, the enhancement doesn't just fix grammar. It has your full project context, so when you say *"fix the bug in the toast view"*, it knows you mean `UnifiedToastView.swift`. But it's conservative — it only fills in specifics you clearly referenced. It never puts words in your mouth.
+
+### It works everywhere
+
+While it's optimized for Claude Code, the voice-to-text works in any app — Slack, VS Code, email, Notion, wherever your cursor is. Context-aware tone adjustment (casual for Slack, precise for terminal, polished for docs).
+
+---
+
+## Theater Mode — your session, narrated by TV characters
+
+<p align="center">
+  <em>[ screenshot: Theater PIP with Gilfoyle & Dinesh discussing your code session ]</em>
+</p>
+
+Optional floating PIP window with an animated stage — themed backgrounds, chibi character sprites with idle/talking/gesturing animations, and dialogue bubbles. TV characters watch your Claude Code session and explain what's happening ELI5-style, completely in character.
+
+> **Gilfoyle:** A DispatchSource — it's basically a file stalker.
+> **Dinesh:** So... it watches files? Like my ex watches my Instagram?
+
+8 character duos. Dialog adapts to your coding pace. Optional TTS voice playback. Your messages get referenced as a third character from the show (you're Richard in Silicon Valley, Michael in The Office, etc.).
+
+<details>
+<summary><strong>Character pairs</strong></summary>
+
+| Theme | Characters | You are |
+|-------|-----------|---------|
+| Silicon Valley | Gilfoyle & Dinesh | Richard |
+| Schitt's Creek | David & Moira | Johnny |
+| The Office | Dwight & Jim | Michael |
+| Friends | Chandler & Joey | Ross |
+| Rick and Morty | Rick & Morty | Jerry |
+| Sherlock | Sherlock & Watson | Lestrade |
+| Breaking Bad | Jesse & Walter | Hank |
+| Iron Man | Tony & JARVIS | Pepper |
+
+</details>
+
+<details>
+<summary><strong>Voice playback setup</strong></summary>
+
+Text-only dialog works out of the box. For character voices:
+
+```bash
+pip install autoclaw-theater
+# That's it — autoclaw auto-launches the voice server when Theater Mode is active
+```
+
+First install downloads ~500MB of model weights (once). [Autoclaw Theater repo →](https://github.com/sameeeeeeep/autoclaw-theater)
+
+</details>
+
+---
+
+## Roadmap
+
+This is **Phase 1** — voice-first vibe coding. The foundation for something bigger.
+
+Autoclaw is designed as a four-mode ambient AI layer that watches, learns, and acts on your behalf at the OS level. Each phase adds a new mode:
+
+| Phase | Mode | Status | What it unlocks |
+|-------|------|--------|----------------|
+| **1** | **Transcribe** | **Now** | Voice-to-text, predictions, smart enhance, theater — everything above |
+| **2** | **Analyze** | Next | Passive autopilot — watches what you do across apps, detects friction, offers to help before you ask. Local Qwen 2.5 3B bouncer → Haiku routing → Claude execution. 8 sensors, 15 workflow templates, MCP tool matching. |
+| **3** | **Task** | Planned | Direct execution — speak or paste a command, Claude handles it with full project context + every MCP server you have installed. |
+| **4** | **Learn** | Planned | Workflow recording — do something once, Claude extracts a reusable template. Your workflows feed back into Analyze, so it gets smarter over time. |
+
+The end state: an AI that knows your workflows, watches your screen, and handles the routine so you can focus on the interesting parts. Transcribe is the entry point — the other modes are the long game.
+
+---
+
+## Quick start
 
 ```bash
 git clone https://github.com/sameeeeeeep/autoclaw.git
 cd autoclaw
-make run        # build + launch
-make dmg        # create distributable DMG
+make run
 ```
 
-### Requirements
+### You need
 
-| Requirement | Why |
-|---|---|
-| **macOS 14+** | SwiftUI, Vision, Neural Engine |
-| **Xcode 15+** | Swift compiler + frameworks |
-| **Claude Code CLI** | `npm install -g @anthropic-ai/claude-code` — used for all AI calls |
-| **Accessibility permission** | Hotkeys, cursor injection, active window detection |
-| **Microphone permission** | Voice transcription |
+- **macOS 14+**
+- **Claude Code CLI** — `npm install -g @anthropic-ai/claude-code`
+- **Xcode 15+** (building from source)
+- Grant **Accessibility** + **Microphone** when macOS prompts
 
 ### Optional
 
-| | |
-|---|---|
-| **Ollama + Qwen 2.5 3B** | `ollama pull qwen2.5:3b` — local bouncer for Analyze mode + transcript cleanup |
-| **Autoclaw Theater** | Theater mode voice playback — see [Theater Mode setup](#theater-mode-setup) below |
-| **Chrome extension** | Load unpacked from `ChromeExtension/` for richer Learn mode |
-| **Screen Recording** | Screen capture for key frame analysis + enhance context |
-
-### Theater Mode Setup (Optional)
-
-Theater Mode shows a floating PIP window where TV characters explain your coding session ELI5-style. **Text-only dialog works out of the box** — no extra install needed. To add **character voices**:
-
 ```bash
-# 1. Install the TTS voice server (Python 3.10+ required)
-pip install autoclaw-theater
-
-# 2. That's it — Autoclaw auto-launches the voice server when Theater Mode is active
+ollama pull qwen2.5:3b          # local bouncer for Analyze mode
+pip install autoclaw-theater     # Theater mode voice playback
+# ChromeExtension/ — load unpacked for richer Learn mode context
 ```
 
-In Autoclaw **Settings → Theater Mode**, toggle it on and pick a character pair (Gilfoyle & Dinesh, David & Moira, etc.).
+---
 
-> **First run note:** The first `pip install` downloads ~500MB of model weights (Pocket TTS + torch). This happens once. If you see text dialogs but no audio, check that `autoclaw-theater` is on your PATH: `which autoclaw-theater`.
+## Controls
 
-[Autoclaw Theater repo →](https://github.com/sameeeeeeep/autoclaw-theater)
+| Key | Action |
+|-----|--------|
+| **Fn** | Open toast / start recording / stop recording |
+| **Right Shift** | Cycle modes |
+| **Left Option ×2** | Full dismiss — end session, clean slate |
+| **Option + Z** | Dismiss toast, keep session alive |
+| **Option + X** | Cycle sub-mode |
 
 ---
 
-## Keyboard Shortcuts
+## Build
 
-| Shortcut | Action |
-|----------|--------|
-| **Fn** (tap) | Open toast / start session / stop session |
-| **Right Shift** (tap) | Cycle modes: Transcribe → Analyze → Task → Learn |
-| **Left Option ×2** | Full dismiss (end session, clean slate, reset to Transcribe) |
-| **Option + Z** | Dismiss toast without ending session |
-| **Option + X** | Cycle request sub-mode |
-
----
-
-## Build System
-
-| Command | What it does |
-|---------|-------------|
+| | |
+|---|---|
 | `make` / `make spm` | Release build (SPM + WhisperKit) |
-| `make debug` | Debug build (fast iteration) |
-| `make legacy` | Pure swiftc, no WhisperKit (fallback) |
-| `make dmg` | Create distributable DMG |
+| `make debug` | Fast iteration |
+| `make legacy` | No WhisperKit, uses Apple Speech fallback |
+| `make dmg` | Distributable DMG |
 | `make run` | Build + launch |
-| `make clean` | Remove build artifacts |
 
 ---
 
-## Chrome Extension
+## Under the hood
 
-The `ChromeExtension/` directory contains a Manifest V3 extension that captures structured DOM events during Learn mode.
+Full architecture, sensor pipeline, 52-file inventory, and every design decision documented in [CLAUDE.md](CLAUDE.md).
 
-| Scenario | OCR alone | With extension |
-|----------|-----------|----------------|
-| Click a button | `Clicked 'Co' in unknown app` | `Clicked button[aria-label="Compose"] on mail.google.com` |
-| Fill a form field | `Clipboard event near 'To'` | `Typed 'sameep@company.com' in input[name="to"]` |
-| Navigate | `App switch to Chrome` | `Navigated to notion.so/workspace/sprint-board` |
-
-### Install
-
-1. Open `chrome://extensions`
-2. Enable **Developer mode**
-3. Click **Load unpacked** → select `ChromeExtension/`
-4. Badge shows **ON** when connected, **REC** when recording
-
----
-
-## Settings
-
-All configurable in the app's Settings tab:
-
-- **STT Engine:** WhisperKit (default) or Apple Speech
-- **Smart Enhance:** Haiku (default) / Sonnet / None
-- **Theater Mode:** Toggle ELI5 dialog generation + TTS voice playback
-- **Dialog Theme:** 8 TV character pairs for session commentary
-- **Projects:** Multiple project directories with context, auto-detected from active window
-- **Ollama:** Health check, model status
-
----
-
-## Tech Stack
-
-Swift 6.3 + SwiftUI, SPM (Package.swift), WhisperKit (base.en, Core ML/Neural Engine), Ollama (Qwen 2.5 3B), NSStatusItem pill, toast cards, NSPanel, SQLite/GRDB, macOS 14+
+Short version: Swift 6.3 + SwiftUI, WhisperKit (base.en, Neural Engine), persistent Haiku sessions via Claude CLI, JSONL file watcher with 4s debounce, session tempo tracking, liquid glass UI on macOS 26 Tahoe.
 
 ---
 
 ## Contributing
 
-The codebase is Swift with SPM. `make debug` for fast iteration. Pick anything from the remaining gaps in CLAUDE.md, open a PR.
-
----
-
-## License
-
-[MIT](LICENSE) — The Last Prompt, 2025.
+`make debug` and go. [CLAUDE.md](CLAUDE.md) has the full map. Pick a gap, open a PR.
 
 ---
 
 <p align="center">
-  <em>AI shouldn't live in an app. It should be the interface.</em>
+  <a href="https://thelastprompt.ai">The Last Prompt</a> · <a href="LICENSE">MIT License</a>
+</p>
+
+<p align="center">
+  <em>You think it. You say it. Claude builds it.</em>
 </p>

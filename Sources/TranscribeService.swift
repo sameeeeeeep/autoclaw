@@ -240,6 +240,8 @@ final class TranscribeService: ObservableObject {
     var sessionContextProvider: (() -> String)?
     /// Last session context hash — only refresh when it changes
     private var lastSessionContextHash: Int = 0
+    /// Running list of completed items this session — carried forward into refresh prompts
+    private var completedItems: [String] = []
 
     /// How often to transcribe a chunk (seconds)
     private let chunkInterval: Float = 25.0
@@ -279,6 +281,7 @@ final class TranscribeService: ObservableObject {
         enhancedText = ""
         suggestedPrompts = []
         sessionDialog = []
+        completedItems = []
         recentWriteTimes = []
         lastRefreshTime = nil
         isEnhancing = false
@@ -591,10 +594,39 @@ final class TranscribeService: ObservableObject {
             lastRefreshTime = Date()
         }
 
+        // Auto-extract completed items: if previous predictions are close to what just happened,
+        // they're likely done — add them to the running completed list
+        extractCompletedItems(from: freshContext)
+
         let dialogHint = AppSettings.shared.theaterMode
             ? " (predictions + dialog). Dialog: exactly \(tempo.dialogTurns) lines — session is \(tempo.rawValue), keep it tight."
             : ""
-        let followUp = "Session activity update:\n\(String(freshContext.suffix(800)))\n\nReply with ONLY the JSON object\(dialogHint), nothing else."
+
+        // Carry forward previous predictions so model can course-correct
+        var prevPredictions = ""
+        if !suggestedPrompts.isEmpty {
+            prevPredictions = "Session update. Previous predictions were:\n"
+            for (i, p) in suggestedPrompts.enumerated() {
+                prevPredictions += "\(i + 1). \(p)\n"
+            }
+            prevPredictions += "\n"
+        }
+
+        // Running completed list for accumulated state
+        var completedBlock = ""
+        if !completedItems.isEmpty {
+            completedBlock = "\nCompleted so far this session:\n"
+            for item in completedItems.suffix(10) {
+                completedBlock += "- \(item)\n"
+            }
+            completedBlock += "\n"
+        }
+
+        let courseCorrect = suggestedPrompts.isEmpty
+            ? ""
+            : "Were previous predictions close? If yes, predict the NEXT step after what just happened.\nIf no, re-read the activity and predict fresh.\n\n"
+
+        let followUp = "\(prevPredictions)What happened since:\n\(String(freshContext.suffix(1200)))\n\(completedBlock)\(courseCorrect)Reply with ONLY the JSON object\(dialogHint), nothing else."
 
         do {
             let result = try await callClaudeCLI(prompt: followUp, model: "haiku", sessionId: sessionId, resume: true)
@@ -602,6 +634,25 @@ final class TranscribeService: ObservableObject {
             DebugLog.log("[PrePrompt] Refresh completed successfully")
         } catch {
             DebugLog.log("[PrePrompt] Refresh failed: \(error)")
+        }
+    }
+
+    /// Lightweight heuristic: scan session context for completion signals and add to running list.
+    /// Looks for patterns like "Done.", "✅", "created", "updated", "fixed" near file names.
+    private func extractCompletedItems(from context: String) {
+        let lines = context.components(separatedBy: "\n")
+        let completionPatterns = ["done", "✅", "successfully", "created ", "updated ", "fixed ", "refactored ", "replaced ", "removed ", "added "]
+        for line in lines.suffix(30) {
+            let lower = line.lowercased().trimmingCharacters(in: .whitespaces)
+            guard completionPatterns.contains(where: { lower.contains($0) }) else { continue }
+            // Extract a short summary (first 100 chars, skip if too short to be useful)
+            let summary = String(line.trimmingCharacters(in: .whitespaces).prefix(100))
+            guard summary.count > 10, !completedItems.contains(summary) else { continue }
+            completedItems.append(summary)
+        }
+        // Cap at 15 most recent to keep prompt size bounded
+        if completedItems.count > 15 {
+            completedItems = Array(completedItems.suffix(15))
         }
     }
 
@@ -621,6 +672,7 @@ final class TranscribeService: ObservableObject {
     func resetHaikuSession() {
         haikuSessionId = nil
         haikuSessionPrimed = false
+        completedItems = []
     }
 
     /// Generate contextual prompt suggestions based on project + session + active app.
@@ -688,23 +740,47 @@ final class TranscribeService: ObservableObject {
                     let personalityGuide = theaterOn ? "\n\(dialogTheme.personality)" : ""
 
                     let primePrompt = """
-                    You are a parallel AI session that tracks what a developer is doing. You have two jobs:
-                    1. Predict what the user will TELL CLAUDE to do next. Read the SESSION carefully — understand the arc of what they're building, what just got completed, and what logically follows. These are voice commands spoken to an AI assistant.
-                       INTENT SIGNALS: Look at the user's last 2-3 messages. If they just finished feature X, they'll want to: connect X to the rest of the system, handle edge cases in X, or move to the next feature Y that depends on X. If they hit a bug, they'll want to fix the root cause, not "test again".
-                       GOOD: "wire the new sprite animations to the dialog state", "add error handling for when the TTS sidecar fails to connect", "refactor the voice map into a config file so users can customize it"
-                       BAD: "test the app", "verify it works", "run the build", "check for errors", "are the predictions accurate?", "does the TTS work now?" — questions and chores are NOT predictions. The user never ASKS Claude to test or evaluate — they TELL Claude to BUILD. Every prediction must be an imperative command starting with a verb.
+                    You are a session observer for a developer using Claude Code. You produce two outputs:
+                    1. TWO predictions of what the user will tell Claude to do next
                     \(dialogInstructions)
                     \(personalityGuide)
 
+                    === HOW TO PREDICT ===
+
+                    Read the SESSION below. Identify:
+                    - LAST COMPLETED: What just finished? (look for "done", successful tool calls, files written)
+                    - CURRENT STATE: Is something mid-flight? (look for errors, partial implementations, TODOs mentioned)
+                    - NATURAL NEXT: Given what just completed, what's the logical next step?
+
+                    Decision tree:
+                    1. If something BROKE → predict the fix (not "debug" — the specific fix: "handle the nil crash in SessionThread.swift when entries array is empty")
+                    2. If something just SHIPPED → predict wiring it in (not "test it" — the integration: "connect the new ClipboardMonitor output to the session thread view")
+                    3. If a feature is partially built → predict the missing piece (not "finish it" — the specific part: "add the fallback case for when no MCP server matches the detected friction")
+                    4. If a milestone just completed → predict the next feature in the dependency chain
+
+                    Each prediction:
+                    - Starts with an imperative verb (add, wire, refactor, fix, implement, move, connect, extract, split, replace)
+                    - References ACTUAL names from the session: files, functions, variables, types, UI elements
+                    - Is specific enough that Claude Code could execute it without follow-up questions
+                    - Under 100 chars
+
+                    ANTI-PATTERNS (never predict these):
+                    - Testing/verification: "test the app", "verify it works", "run the build", "check if X works"
+                    - Questions: "does X work?", "is Y correct?", "what about Z?"
+                    - Vague commands: "clean up the code", "improve performance", "fix the bugs"
+                    - Meta-commentary: "continue working on X", "keep going with Y"
+
+                    === CONTEXT ===
+
                     \(contextBlock)
 
-                    PROJECT is what this project is about. SESSION is the live conversation between the user and Claude — user messages, Claude's responses, tool calls, everything happening right now.
                     You will be asked repeatedly for updated recommendations\(theaterOn ? " + dialog" : "").
 
-                    RULES:
-                    - Reply with ONLY a JSON object, nothing else. No markdown, no explanation.
+                    === OUTPUT ===
+
+                    - Reply with ONLY a JSON object, nothing else. No markdown, no explanation, no wrapping.
                     - Format: \(formatExample)
-                    - Predictions: under 100 chars each. These are IMPERATIVE COMMANDS the user would speak to Claude — always start with a verb (add, wire, refactor, fix, implement, move, connect, update). NEVER a question, observation, or meta-comment about the system. Read the last few SESSION messages — what would the user naturally TELL Claude to build next? Reference actual file names, feature names, and variable names from the session.
+                    - Predictions: exactly 2, under 100 chars each.
                     \(theaterOn ? "- Dialog: a COHERENT back-and-forth conversation. \(dialogTheme.char1) and \(dialogTheme.char2) discuss what just happened, building on each other's lines. STAY IN CHARACTER — use the voice guide above for tone, catchphrases, and analogies. Map technical concepts to the show's universe. Refer to the user as \(dialogTheme.boss). Each line under 120 chars. IMPORTANT: I will specify the exact number of dialog lines each time — follow it precisely. The count is based on session pace so the dialog finishes before the next update arrives." : "")
                     - If SESSION is empty or unclear, \(theaterOn ? "dialog can be about the project in general." : "base recommendations on PROJECT context.")
                     """
@@ -901,17 +977,12 @@ final class TranscribeService: ObservableObject {
             contextBlock += "\nRecent session activity:\n\(sessionContext)\n"
         }
 
-        // Include pre-prompt prediction for continuity (same "thread" of understanding)
-        var predictionHint = ""
-        if !suggestedPrompt.isEmpty {
-            predictionHint = "\nPredicted intent: \(suggestedPrompt)\n"
-        }
-
         let prompt: String
-        if contextBlock.isEmpty && predictionHint.isEmpty {
+        if contextBlock.isEmpty {
             prompt = """
-            Rewrite this dictated text to be better. Keep the user's voice and meaning. \
-            Make it sharper and clearer. If it's already good, return it mostly as-is. \
+            Rewrite this dictated text. Keep the speaker's voice and intent. \
+            Make it sharper and clearer. If it's already clean, return it mostly as-is. \
+            Remove filler words and false starts. \
             Tone: \(appContext). Active app: \(app). \
             Return ONLY the improved text, nothing else.
 
@@ -919,15 +990,16 @@ final class TranscribeService: ObservableObject {
             """
         } else {
             prompt = """
-            Enhance this dictated text. You have full context of what the user is working on. \
-            Be PROACTIVE — don't just clean up grammar: \
-            - Add specific details from the project/session context (file names, function names, variable names) \
-            - If the user is giving an instruction, make it more complete and actionable \
-            - If the user is describing a problem, add technical specifics they might have skipped while speaking \
-            - If the user mentions something vague, fill in the concrete details from context \
-            Keep their voice and intent, but make it the version they WISH they'd said. \
+            Enhance this dictated text. You have project context below. \
+            RULES: \
+            - Fix grammar, remove filler, tighten phrasing \
+            - If the speaker references something vague that clearly maps to a specific file/function/variable from context, substitute the specific name \
+            - If the speaker's intent is ambiguous, preserve the ambiguity — do NOT guess \
+            - NEVER add details the speaker didn't reference or imply \
+            - NEVER change the speaker's intent or add instructions they didn't give \
+            - Keep their voice — if they're casual, stay casual \
             Tone: \(appContext). Active app: \(app).
-            \(contextBlock)\(predictionHint)
+            \(contextBlock)
             Return ONLY the enhanced text, nothing else.
 
             "\(text)"
