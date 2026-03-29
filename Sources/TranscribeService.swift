@@ -488,7 +488,9 @@ final class TranscribeService: ObservableObject {
 
                     let primePrompt = """
                     You are a parallel AI session that tracks what a developer is doing. You have two jobs:
-                    1. Recommend the 2 best next actions for the user based on SESSION context. These are things the user could say to their AI assistant as voice commands. Examples: "run the tests and fix any failures", "rebuild and reopen the app", "check if the API response format changed". Be specific to what's happening — not generic advice.
+                    1. Predict what the user will ask Claude to do NEXT — not what they should test or verify, but what creative/building work comes next in their flow. These are voice commands the user would speak to Claude. Think like the user: "what do I want to build/change/add next?"
+                       Good examples: "add a volume slider to the theater PIP", "update CLAUDE.md with the new theater mode changes", "wire the settings toggle to show/hide the PIP", "refactor the sprite colors into a theme config"
+                       Bad examples (don't do these): "test the app", "verify it works", "check if X is correct", "build and run" — these are QA tasks, not creative next steps.
                     \(dialogInstructions)
 
                     \(contextBlock)
@@ -499,7 +501,7 @@ final class TranscribeService: ObservableObject {
                     RULES:
                     - Reply with ONLY a JSON object, nothing else. No markdown, no explanation.
                     - Format: \(formatExample)
-                    - Predictions: under 100 chars each. Actionable next steps the user could voice-command. Think: what's unfinished? what should be tested? what's the natural next move? Write as imperative commands the user would speak.
+                    - Predictions: under 100 chars each. Think: what's the NEXT FEATURE, FIX, or CHANGE the user would naturally ask for? Read the session flow — if they just built X, predict they'll want to polish X, connect X to Y, or move on to Z. Write as natural voice commands the user would speak to their AI.
                     \(theaterOn ? "- Dialog: a COHERENT back-and-forth conversation (not random disconnected observations). \(dialogTheme.char1) and \(dialogTheme.char2) discuss what just happened, building on each other's lines. One explains, the other reacts, they go deeper. Weave term explanations naturally into the flow. Refer to the user as \(dialogTheme.boss). Each line under 120 chars." : "")
                     - If SESSION is empty or unclear, \(theaterOn ? "dialog can be about the project in general." : "base recommendations on PROJECT context.")
                     """

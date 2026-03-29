@@ -1,18 +1,23 @@
+import AppKit
 import Foundation
 import AVFoundation
 
-/// Speaks ELI5 dialog lines using the SiliconValley Theater TTS sidecar (port 7893).
-/// Uses the /synthesize_dialogue batch endpoint for efficiency — one HTTP call for both lines.
-/// Falls back gracefully to silence if sidecar isn't running.
+/// Speaks ELI5 dialog lines using a TTS sidecar server (port 7893).
+/// Autoclaw owns the Python TTS process directly — no dependency on SiliconValley Theater app.
+/// Uses the /synthesize_dialogue batch endpoint for efficiency — one HTTP call for all lines.
+/// Falls back gracefully to text-only if sidecar fails to start.
 @MainActor
 final class DialogVoiceService: ObservableObject {
     @Published var isSpeaking = false
+    @Published var sidecarReady = false
 
     private var player: AVAudioPlayer?
-    private var playbackQueue: [Data] = []
     private var playbackTask: Task<Void, Never>?
+    private var sidecarProcess: Process?
+    private var launchTask: Task<Void, Never>?
 
     private static let sidecarBase = "http://127.0.0.1:7893"
+    private static let port = 7893
 
     // MARK: - Public
 
@@ -25,6 +30,11 @@ final class DialogVoiceService: ObservableObject {
         guard !lines.isEmpty else { return }
 
         playbackTask = Task { @MainActor in
+            // Ensure sidecar is up before trying to synthesize
+            if !sidecarReady {
+                await waitForSidecar(timeout: 10)
+            }
+
             // Map dialog lines to TTS turns with correct voice IDs
             let turns: [(text: String, voiceID: String)] = lines.map { line in
                 let voiceID = line.character == theme.char1 ? theme.voice1 : theme.voice2
@@ -59,10 +69,136 @@ final class DialogVoiceService: ObservableObject {
         guard let url = URL(string: "\(Self.sidecarBase)/health") else { return false }
         do {
             let (_, resp) = try await URLSession.shared.data(from: url)
-            return (resp as? HTTPURLResponse)?.statusCode == 200
+            let ok = (resp as? HTTPURLResponse)?.statusCode == 200
+            sidecarReady = ok
+            return ok
         } catch {
+            sidecarReady = false
             return false
         }
+    }
+
+    // MARK: - Sidecar Process Management
+
+    /// Launch the TTS Python server directly. Autoclaw owns this process.
+    /// Searches for server.py + venv in known locations. Non-blocking — polls for readiness.
+    func launchSidecarIfNeeded() {
+        // Don't double-launch
+        guard launchTask == nil else { return }
+
+        launchTask = Task {
+            // Already running?
+            if await checkSidecar() {
+                DebugLog.log("[TTS] Sidecar already running on port \(Self.port)")
+                launchTask = nil
+                return
+            }
+
+            // Find the TTSSidecar directory
+            let searchPaths = [
+                Bundle.main.bundlePath + "/../TTSSidecar",
+                NSHomeDirectory() + "/Documents/Claude Code/SiliconValley/TTSSidecar",
+                NSHomeDirectory() + "/Documents/Claude Code/Autoclaw/TTSSidecar",
+            ]
+
+            var sidecarDir: String?
+            for path in searchPaths {
+                let serverPath = path + "/server.py"
+                if FileManager.default.fileExists(atPath: serverPath) {
+                    sidecarDir = path
+                    break
+                }
+            }
+
+            guard let dir = sidecarDir else {
+                DebugLog.log("[TTS] server.py not found in any search path — voice disabled")
+                DebugLog.log("[TTS] Searched: \(searchPaths)")
+                launchTask = nil
+                return
+            }
+
+            let serverScript = dir + "/server.py"
+            let venvPython = dir + "/.venv/bin/python3"
+
+            // Prefer venv Python (has all deps installed), fall back to system
+            let pythonPath: String
+            let args: [String]
+            if FileManager.default.fileExists(atPath: venvPython) {
+                pythonPath = venvPython
+                args = [serverScript, "--port", "\(Self.port)", "--engine", "pocket"]
+            } else {
+                pythonPath = "/usr/bin/env"
+                args = ["python3", serverScript, "--port", "\(Self.port)", "--engine", "pocket"]
+            }
+
+            DebugLog.log("[TTS] Starting sidecar: \(pythonPath) \(args.joined(separator: " "))")
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: pythonPath)
+            process.arguments = args
+            process.currentDirectoryURL = URL(fileURLWithPath: dir)
+
+            // Capture stdout/stderr for debugging
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            pipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if let text = String(data: data, encoding: .utf8), !text.isEmpty {
+                    for line in text.split(separator: "\n") {
+                        DebugLog.log("[TTS-py] \(line)")
+                    }
+                }
+            }
+
+            do {
+                try process.run()
+                sidecarProcess = process
+                DebugLog.log("[TTS] Process started (pid \(process.processIdentifier))")
+
+                // Poll for readiness — model loading can take a while on first run
+                for attempt in 1...60 {
+                    try? await Task.sleep(for: .seconds(2))
+
+                    if !process.isRunning {
+                        DebugLog.log("[TTS] Process exited early (code \(process.terminationStatus))")
+                        break
+                    }
+
+                    if await checkSidecar() {
+                        DebugLog.log("[TTS] Sidecar ready after \(attempt * 2)s")
+                        launchTask = nil
+                        return
+                    }
+                }
+
+                DebugLog.log("[TTS] Sidecar did not become ready within 120s")
+            } catch {
+                DebugLog.log("[TTS] Failed to start sidecar: \(error)")
+            }
+
+            launchTask = nil
+        }
+    }
+
+    /// Wait for the sidecar to become ready (used by speak() to avoid wasting synthesis calls)
+    private func waitForSidecar(timeout: Int) async {
+        for _ in 0..<timeout {
+            if await checkSidecar() { return }
+            try? await Task.sleep(for: .seconds(1))
+        }
+    }
+
+    /// Kill the sidecar process on app quit
+    func stopSidecar() {
+        if let process = sidecarProcess, process.isRunning {
+            DebugLog.log("[TTS] Stopping sidecar (pid \(process.processIdentifier))")
+            process.terminate()
+        }
+        sidecarProcess = nil
+        sidecarReady = false
+        launchTask?.cancel()
+        launchTask = nil
     }
 
     // MARK: - Synthesis
@@ -89,13 +225,13 @@ final class DialogVoiceService: ObservableObject {
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let audioList = json["audio"] as? [String?]
             else {
-                DebugLog.log("[DialogVoice] Sidecar returned non-200 or bad JSON")
+                DebugLog.log("[TTS] Sidecar returned non-200 or bad JSON")
                 return Array(repeating: nil, count: turns.count)
             }
 
             return audioList.map { $0.flatMap { Data(base64Encoded: $0) } }
         } catch {
-            DebugLog.log("[DialogVoice] Sidecar unreachable: \(error.localizedDescription)")
+            DebugLog.log("[TTS] Sidecar unreachable: \(error.localizedDescription)")
             return Array(repeating: nil, count: turns.count)
         }
     }
@@ -120,7 +256,7 @@ final class DialogVoiceService: ObservableObject {
                 audioPlayer.play()
                 self.player = audioPlayer
             } catch {
-                DebugLog.log("[DialogVoice] Playback error: \(error)")
+                DebugLog.log("[TTS] Playback error: \(error)")
                 cont.resume()
             }
         }

@@ -292,28 +292,7 @@ struct UnifiedToastView: View {
                         }
                     }
 
-                    // ELI5 dialog exchange (character banter about session) — theater mode only
-                    if AppSettings.shared.theaterMode && !appState.transcribeService.sessionDialog.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(appState.transcribeService.sessionDialog) { line in
-                                HStack(alignment: .top, spacing: 6) {
-                                    Text(line.character)
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(Theme.teal.opacity(0.8))
-                                        .frame(width: 52, alignment: .trailing)
-                                    Text(line.line)
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(theme.textSecondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                        .lineLimit(nil)
-                                }
-                            }
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 8)
-                        .background(theme.textPrimary.opacity(0.03))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                    }
+                    // ELI5 dialog now shown in Theater PIP window (TheaterPIPView)
 
                     // Start button — always visible, with subtle loading hint if pre-prompt is generating
                     actionButton(

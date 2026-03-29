@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var projectPickerWindow: ToastWindow!
     // Legacy friction window kept for backward compat — unified toast handles both now
     private var frictionToastWindow: ToastWindow!
+    private var theaterPIPWindow: TheaterPIPWindow!
     private var hotkeyMonitor: GlobalHotkeyMonitor!
     private var cancellables = Set<AnyCancellable>()
 
@@ -32,6 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startServices()
         observeState()
         DebugLog.log("[App] Launch complete")
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Kill TTS sidecar process so it doesn't orphan
+        appState.transcribeService.dialogVoice.stopSidecar()
+        DebugLog.log("[App] Terminated — sidecar stopped")
     }
 
     // MARK: - Setup
@@ -125,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toastWindow = ToastWindow()
         projectPickerWindow = ToastWindow()
         frictionToastWindow = ToastWindow()  // legacy, kept for friction-only display
+        theaterPIPWindow = TheaterPIPWindow()
     }
 
     private func setupHotkey() {
@@ -217,8 +225,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 s.voiceService.whisperKitService.forceReset()
                 s.voiceService.isListening = false
                 s.isTranscribing = false
-                // Dismiss toast and clear all state
+                // Dismiss toast + theater PIP and clear all state
                 self?.toastWindow.dismiss()
+                self?.theaterPIPWindow.dismiss()
                 s.showThread = false
                 s.lastEndedThread = nil
                 s.threadMessages = []
@@ -381,6 +390,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             .store(in: &cancellables)
+
+        // Theater PIP — show when dialog arrives, refit on updates.
+        // Never auto-dismiss on empty — only explicit user dismiss (X button) or session end.
+        appState.transcribeService.$sessionDialog
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] dialog in
+                guard let self else { return }
+                guard AppSettings.shared.theaterMode else { return }
+                guard !dialog.isEmpty else { return }  // ignore clears during refresh
+                if self.theaterPIPWindow.isVisible {
+                    self.theaterPIPWindow.refit()
+                } else {
+                    self.showTheaterPIP()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Dismiss theater PIP when session ends or theater mode disabled
+        appState.$sessionActive
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] active in
+                guard let self else { return }
+                if !active {
+                    self.theaterPIPWindow.dismiss()
+                }
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Toast Presentation
@@ -439,6 +476,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         projectPickerWindow.show(with: view)
+    }
+
+    private func showTheaterPIP() {
+        // Auto-launch TTS sidecar if not running
+        appState.transcribeService.dialogVoice.launchSidecarIfNeeded()
+
+        let view = TheaterPIPView(
+            transcribeService: appState.transcribeService,
+            onDismiss: { [weak self] in
+                self?.theaterPIPWindow.dismiss()
+            }
+        )
+        theaterPIPWindow.show(with: view)
     }
 
     private func showFrictionToast() {
