@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Combine
+import AutoclawTheater
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -514,7 +515,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState.transcribeService.dialogVoice.startFillerLoop(theme: theme, projectPath: projectPath)
 
         let view = TheaterPIPView(
-            transcribeService: appState.transcribeService,
+            dataSource: appState.transcribeService,
+            dialogThemeId: AppSettings.shared.dialogThemeId,
             onDismiss: { [weak self] in
                 self?.theaterPIPWindow.dismiss()
                 self?.appState.transcribeService.dialogVoice.stopFillerLoop()

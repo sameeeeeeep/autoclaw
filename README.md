@@ -100,6 +100,8 @@ Floating PIP with an animated stage. Themed backgrounds, chibi character sprites
 
 Your messages get referenced as a third character from the show — you're Richard in Silicon Valley, Michael in The Office, Jerry in Rick and Morty.
 
+Theater lives in its own SPM module (`AutoclawTheater`). Don't want it? Remove one line from `Package.swift` and three imports. The core app works without it.
+
 <details>
 <summary><strong>Character pairs</strong></summary>
 
@@ -201,7 +203,7 @@ pip install autoclaw-theater     # Theater mode voice playback
 
 ## Under the hood
 
-54 Swift files. WhisperKit on Neural Engine. Persistent Haiku sessions via Claude CLI. JSONL file watcher with 4s debounce. Session tempo tracking. Voice caching. PM agent with sandboxed file access. Liquid glass UI on macOS 26 Tahoe.
+58 Swift files across 2 SPM targets. Theater is a separate `AutoclawTheater` library module — fully opt-out if you don't want the theatrics. WhisperKit on Neural Engine. Persistent Haiku sessions via Claude CLI. JSONL file watcher with 4s debounce. Session tempo tracking. Voice caching. PM agent with sandboxed file access. Liquid glass UI on macOS 26 Tahoe.
 
 Full architecture, sensor pipeline, file inventory, and every design decision in [CLAUDE.md](CLAUDE.md).
 

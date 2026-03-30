@@ -1,4 +1,5 @@
 import SwiftUI
+import AutoclawTheater
 
 struct SettingsView: View {
     @ObservedObject var appState: AppState

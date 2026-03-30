@@ -7,14 +7,16 @@ import AVFoundation
 /// Uses the /synthesize_dialogue batch endpoint for efficiency — one HTTP call for all lines.
 /// Falls back gracefully to text-only if sidecar fails to start.
 @MainActor
-final class DialogVoiceService: ObservableObject {
-    @Published var isSpeaking = false
-    @Published var sidecarReady = false
+public final class DialogVoiceService: ObservableObject {
+    @Published public var isSpeaking = false
+    @Published public var sidecarReady = false
     /// Index of the line currently being spoken within the full sessionDialog array.
     /// -1 when not speaking. TheaterPIPView uses this to sync bubbles with audio.
-    @Published var currentLineIndex: Int = -1
+    @Published public var currentLineIndex: Int = -1
     /// True when playing filler content between real dialogs
-    @Published var isPlayingFiller = false
+    @Published public var isPlayingFiller = false
+
+    public init() {}
 
     private var player: AVAudioPlayer?
     private var playbackTask: Task<Void, Never>?
@@ -38,7 +40,7 @@ final class DialogVoiceService: ObservableObject {
     /// If currently speaking, queues the new dialog and injects a cold open to bridge the gap.
     /// Non-blocking — fires and forgets.
     /// - Parameter baseIndex: index of the first line in the full sessionDialog array (for bubble sync)
-    func speak(_ lines: [DialogLine], theme: DialogTheme, baseIndex: Int = 0) {
+    public func speak(_ lines: [DialogLine], theme: DialogTheme, baseIndex: Int = 0) {
         guard !lines.isEmpty else { return }
         DebugLog.log("[TTS] speak() called — \(lines.count) lines, theme: \(theme.id), baseIndex: \(baseIndex), isPlayingBatch: \(isPlayingBatch)")
 
@@ -59,7 +61,7 @@ final class DialogVoiceService: ObservableObject {
     }
 
     /// Stop any in-progress playback and clear the queue
-    func stop() {
+    public func stop() {
         dialogQueue.removeAll()
         playbackTask?.cancel()
         playbackTask = nil
@@ -167,7 +169,7 @@ final class DialogVoiceService: ObservableObject {
     }
 
     /// Check if the TTS sidecar is reachable
-    func checkSidecar() async -> Bool {
+    public func checkSidecar() async -> Bool {
         guard let url = URL(string: "\(Self.sidecarBase)/health") else { return false }
         do {
             let (_, resp) = try await URLSession.shared.data(from: url)
@@ -184,7 +186,7 @@ final class DialogVoiceService: ObservableObject {
 
     /// Launch the TTS Python server directly. Autoclaw owns this process.
     /// Searches for server.py + venv in known locations. Non-blocking — polls for readiness.
-    func launchSidecarIfNeeded() {
+    public func launchSidecarIfNeeded() {
         // Don't double-launch
         guard launchTask == nil else { return }
 
@@ -335,7 +337,7 @@ final class DialogVoiceService: ObservableObject {
     }
 
     /// Kill the sidecar process on app quit
-    func stopSidecar() {
+    public func stopSidecar() {
         if let process = sidecarProcess, process.isRunning {
             DebugLog.log("[TTS] Stopping sidecar (pid \(process.processIdentifier))")
             process.terminate()
@@ -443,7 +445,7 @@ extension DialogVoiceService {
     // MARK: - Loading
 
     /// Load fillers + cold opens from .autoclaw/ and prepare voice cache
-    func loadContent(from projectPath: String, theme: DialogTheme) {
+    public func loadContent(from projectPath: String, theme: DialogTheme) {
         let autoclawDir = "\(projectPath)/.autoclaw"
         let fm = FileManager.default
 
@@ -491,7 +493,7 @@ extension DialogVoiceService {
     }
 
     /// Get cached WAV data for a line, or nil if not cached
-    func cachedAudio(text: String, voiceID: String, cacheDir: String) -> Data? {
+    public func cachedAudio(text: String, voiceID: String, cacheDir: String) -> Data? {
         let key = cacheKey(text: text, voiceID: voiceID)
         let path = "\(cacheDir)/\(key).wav"
         return FileManager.default.contents(atPath: path)
@@ -554,7 +556,8 @@ extension DialogVoiceService {
 
     /// Play a cold open immediately from cache. Returns true if played.
     /// The played cold open is permanently removed so it never repeats.
-    func playColdOpen(theme: DialogTheme, projectPath: String) -> Bool {
+    @discardableResult
+    public func playColdOpen(theme: DialogTheme, projectPath: String) -> Bool {
         let cacheDir = "\(projectPath)/.autoclaw/\(cacheDirName)"
         let key = "cold-\(theme.id)"
         guard var coldOpens = loadedFillers[key], !coldOpens.isEmpty else { return false }
@@ -567,10 +570,10 @@ extension DialogVoiceService {
         coldOpens.remove(at: idx)
         loadedFillers[key] = coldOpens
 
-        // Persist removal to cold-opens.json
+        // Persist removal to cold-opens.json + delete cached WAVs after playback
         removeConvoFromJSON(file: "\(projectPath)/.autoclaw/cold-opens.json", themeId: theme.id, index: idx)
 
-        // Check if ALL lines are cached
+        // Check if ALL lines are cached (read into memory before deleting files)
         let allCached = convo.allSatisfy { line in
             let voiceID = line.character == theme.char1 ? theme.voice1 : theme.voice2
             return cachedAudio(text: line.line, voiceID: voiceID, cacheDir: cacheDir) != nil
@@ -590,7 +593,7 @@ extension DialogVoiceService {
         return true
     }
 
-    /// Play a conversation entirely from cache
+    /// Play a conversation entirely from cache, then delete the WAV files
     private func playCachedConvo(_ lines: [DialogLine], theme: DialogTheme, cacheDir: String) {
         playbackTask?.cancel()
         stopPlayback()
@@ -601,6 +604,7 @@ extension DialogVoiceService {
                 isPlayingBatch = false
                 isPlayingFiller = false
                 currentLineIndex = -1
+                deleteCachedAudio(for: lines, theme: theme, cacheDir: cacheDir)
                 drainQueue()
             }
 
@@ -620,7 +624,7 @@ extension DialogVoiceService {
     // MARK: - Filler Loop
 
     /// Start playing random filler dialog on a timer when idle
-    func startFillerLoop(theme: DialogTheme, projectPath: String? = nil) {
+    public func startFillerLoop(theme: DialogTheme, projectPath: String? = nil) {
         stopFillerLoop()
         let projPath = projectPath
         fillerTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
@@ -630,7 +634,7 @@ extension DialogVoiceService {
         }
     }
 
-    func stopFillerLoop() {
+    public func stopFillerLoop() {
         fillerTimer?.invalidate()
         fillerTimer = nil
     }
@@ -673,13 +677,25 @@ extension DialogVoiceService {
     }
 
     /// Called when a real dialog batch arrives — stop filler, reset flag
-    func interruptFiller() {
+    public func interruptFiller() {
         if isPlayingFiller {
             isPlayingFiller = false
         }
     }
 
     // MARK: - Persist Removals
+
+    /// Delete cached WAV files for a conversation's lines so they don't linger on disk.
+    private func deleteCachedAudio(for lines: [DialogLine], theme: DialogTheme, cacheDir: String) {
+        let fm = FileManager.default
+        for line in lines {
+            let voiceID = line.character == theme.char1 ? theme.voice1 : theme.voice2
+            let key = cacheKey(text: line.line, voiceID: voiceID)
+            let path = "\(cacheDir)/\(key).wav"
+            try? fm.removeItem(atPath: path)
+        }
+        DebugLog.log("[TTS] Deleted \(lines.count) cached WAVs")
+    }
 
     /// Remove a conversation at `index` from a JSON file so it's never played again.
     private func removeConvoFromJSON(file: String, themeId: String, index: Int) {

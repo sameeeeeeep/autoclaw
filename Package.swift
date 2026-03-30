@@ -8,10 +8,19 @@ let package = Package(
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.12.0"),
     ],
     targets: [
+        .target(
+            name: "AutoclawTheater",
+            path: "Sources/Theater",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("AVFoundation"),
+            ]
+        ),
         .executableTarget(
             name: "Autoclaw",
-            dependencies: ["WhisperKit"],
+            dependencies: ["WhisperKit", "AutoclawTheater"],
             path: "Sources",
+            exclude: ["Theater"],
             resources: [
                 .copy("../Resources"),
             ],

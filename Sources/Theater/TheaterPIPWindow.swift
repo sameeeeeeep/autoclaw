@@ -4,8 +4,10 @@ import SwiftUI
 /// Floating Picture-in-Picture window for SiliconValley Theater dialog.
 /// Stays above other windows while the Haiku session is active.
 /// Uses liquid glass effect (macOS 26) with fallback, matching toast styling.
-final class TheaterPIPWindow: NSPanel {
-    init() {
+public final class TheaterPIPWindow: NSPanel {
+    public var isShowing: Bool { isVisible && hasContent }
+
+    public init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 380, height: 300),
             styleMask: [.nonactivatingPanel, .fullSizeContentView],
@@ -25,7 +27,7 @@ final class TheaterPIPWindow: NSPanel {
     private var hosting: TheaterFirstMouseHostingView?
     private var hasContent = false
 
-    func show(with view: some View) {
+    public func show(with view: some View) {
         if hasContent {
             // Already showing — just ensure visible, don't recreate the view hierarchy.
             // SwiftUI @ObservedObject reactivity handles content updates.
@@ -88,7 +90,7 @@ final class TheaterPIPWindow: NSPanel {
     }
 
     /// Update window size when dialog content changes
-    func refit() {
+    public func refit() {
         guard let hostingView = hosting else { return }
         hostingView.layoutSubtreeIfNeeded()
         let fitting = hostingView.fittingSize
@@ -103,7 +105,7 @@ final class TheaterPIPWindow: NSPanel {
         setFrame(frame, display: true, animate: true)
     }
 
-    func dismiss() {
+    public func dismiss() {
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.2
             animator().alphaValue = 0
@@ -116,8 +118,8 @@ final class TheaterPIPWindow: NSPanel {
         })
     }
 
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
+    override public var canBecomeKey: Bool { true }
+    override public var canBecomeMain: Bool { false }
 }
 
 // MARK: - First-Mouse Views (immediate click without activation)

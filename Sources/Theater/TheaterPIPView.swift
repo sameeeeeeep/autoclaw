@@ -3,15 +3,22 @@ import SwiftUI
 /// Picture-in-Picture floating widget for SiliconValley Theater.
 /// Full animated stage: themed background, two character sprites with idle/talking/gesturing
 /// animations, dialogue bubbles, and a scrolling transcript.
-struct TheaterPIPView: View {
-    @ObservedObject var transcribeService: TranscribeService
+public struct TheaterPIPView<Source: TheaterDataSource>: View {
+    @ObservedObject var dataSource: Source
+    let dialogThemeId: String
     let onDismiss: () -> Void
 
+    public init(dataSource: Source, dialogThemeId: String, onDismiss: @escaping () -> Void) {
+        self.dataSource = dataSource
+        self.dialogThemeId = dialogThemeId
+        self.onDismiss = onDismiss
+    }
+
     @Environment(\.colorScheme) private var colorScheme
-    private var theme: Theme { Theme(colorScheme: colorScheme) }
+    private var theme: TheaterColors { TheaterColors(colorScheme: colorScheme) }
 
     private var dialogTheme: DialogTheme {
-        DialogTheme.find(AppSettings.shared.dialogThemeId)
+        DialogTheme.find(dialogThemeId)
     }
 
     // Animation timer — drives sprite state at ~7fps
@@ -23,7 +30,7 @@ struct TheaterPIPView: View {
     // displayedLineIndex drives bubble + transcript highlight, synced from TTS currentLineIndex
     @State private var displayedLineIndex: Int = -1
 
-    var body: some View {
+    public var body: some View {
         VStack(spacing: 0) {
             // Header
             headerBar
@@ -38,7 +45,7 @@ struct TheaterPIPView: View {
                 .padding(.horizontal, 10)
 
             // Transcript — scrolling dialog history
-            if !transcribeService.sessionDialog.isEmpty {
+            if !dataSource.sessionDialog.isEmpty {
                 Divider()
                     .background(theme.border)
                     .padding(.horizontal, 10)
@@ -56,17 +63,17 @@ struct TheaterPIPView: View {
         }
         .frame(width: 380)
         .modifier(TheaterLiquidGlass(fallbackColor: theme.card))
-        .intelligenceGlow(
-            color: Theme.teal,
+        .theaterGlow(
+            color: TheaterColors.teal,
             cornerRadius: 16,
-            state: transcribeService.dialogVoice.isSpeaking ? .thinking : .off
+            state: dataSource.dialogVoice.isSpeaking ? .thinking : .off
         )
         .shadow(color: .black.opacity(colorScheme == .dark ? 0.5 : 0.12), radius: 20, y: 6)
         .onAppear { startAnimationLoop() }
         .onDisappear { stopAnimationLoop() }
-        .onChange(of: transcribeService.dialogVoice.currentLineIndex) {
-            let idx = transcribeService.dialogVoice.currentLineIndex
-            if idx >= 0 && idx < transcribeService.sessionDialog.count {
+        .onChange(of: dataSource.dialogVoice.currentLineIndex) {
+            let idx = dataSource.dialogVoice.currentLineIndex
+            if idx >= 0 && idx < dataSource.sessionDialog.count {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     displayedLineIndex = idx
                 }
@@ -74,7 +81,7 @@ struct TheaterPIPView: View {
                 // TTS finished — keep last bubble visible briefly, then clear
                 Task { @MainActor in
                     try? await Task.sleep(for: .seconds(2))
-                    guard transcribeService.dialogVoice.currentLineIndex < 0 else { return }
+                    guard dataSource.dialogVoice.currentLineIndex < 0 else { return }
                     withAnimation(.easeOut(duration: 0.3)) {
                         displayedLineIndex = -1
                     }
@@ -91,25 +98,25 @@ struct TheaterPIPView: View {
             HStack(spacing: 4) {
                 Image(systemName: "theatermasks.fill")
                     .font(.system(size: 9))
-                    .foregroundStyle(Theme.teal)
+                    .foregroundStyle(TheaterColors.teal)
                 Text(dialogTheme.show)
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Theme.teal)
+                    .foregroundStyle(TheaterColors.teal)
             }
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(Theme.teal.opacity(0.12))
+            .background(TheaterColors.teal.opacity(0.12))
             .clipShape(Capsule())
 
             Spacer()
 
             // Speaking indicator
-            if transcribeService.dialogVoice.isSpeaking {
+            if dataSource.dialogVoice.isSpeaking {
                 HStack(spacing: 3) {
                     speakingDots
-                    Text(transcribeService.dialogVoice.isPlayingFiller ? "Filler" : "Speaking")
+                    Text(dataSource.dialogVoice.isPlayingFiller ? "Filler" : "Speaking")
                         .font(.system(size: 8, weight: .medium))
-                        .foregroundStyle(transcribeService.dialogVoice.isPlayingFiller ? Theme.purple.opacity(0.6) : Theme.teal.opacity(0.6))
+                        .foregroundStyle(dataSource.dialogVoice.isPlayingFiller ? TheaterColors.purple.opacity(0.6) : TheaterColors.teal.opacity(0.6))
                 }
             }
 
@@ -182,8 +189,8 @@ struct TheaterPIPView: View {
             )
 
             // Dialog bubble (above the speaking character)
-            if displayedLineIndex >= 0 && displayedLineIndex < transcribeService.sessionDialog.count {
-                let line = transcribeService.sessionDialog[displayedLineIndex]
+            if displayedLineIndex >= 0 && displayedLineIndex < dataSource.sessionDialog.count {
+                let line = dataSource.sessionDialog[displayedLineIndex]
                 let isChar1 = line.character == dialogTheme.char1
 
                 dialogBubble(text: line.line, pointsLeft: isChar1)
@@ -229,9 +236,9 @@ struct TheaterPIPView: View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(transcribeService.sessionDialog.enumerated()), id: \.element.id) { idx, line in
+                    ForEach(Array(dataSource.sessionDialog.enumerated()), id: \.element.id) { idx, line in
                         let isChar1 = line.character == dialogTheme.char1
-                        let charColor: Color = isChar1 ? Theme.teal : Theme.purple
+                        let charColor: Color = isChar1 ? TheaterColors.teal : TheaterColors.purple
                         let isActive = idx == displayedLineIndex
 
                         HStack(alignment: .top, spacing: 6) {
@@ -252,8 +259,8 @@ struct TheaterPIPView: View {
                 }
                 .padding(.vertical, 6)
             }
-            .onChange(of: transcribeService.sessionDialog.count) {
-                if let last = transcribeService.sessionDialog.last {
+            .onChange(of: dataSource.sessionDialog.count) {
+                if let last = dataSource.sessionDialog.last {
                     withAnimation(.easeOut(duration: 0.3)) {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
@@ -266,17 +273,17 @@ struct TheaterPIPView: View {
 
     private var emptyHint: some View {
         VStack(spacing: 6) {
-            if transcribeService.isGeneratingPrompt {
+            if dataSource.isGeneratingPrompt {
                 HStack(spacing: 6) {
                     ProgressView()
                         .controlSize(.mini)
-                        .tint(Theme.teal)
-                    Text("Writing the script…")
+                        .tint(TheaterColors.teal)
+                    Text("Writing the script\u{2026}")
                         .font(.system(size: 10))
-                        .foregroundStyle(Theme.teal.opacity(0.7))
+                        .foregroundStyle(TheaterColors.teal.opacity(0.7))
                 }
             } else {
-                Text("\(dialogTheme.char1) & \(dialogTheme.char2) are waiting for the scene…")
+                Text("\(dialogTheme.char1) & \(dialogTheme.char2) are waiting for the scene\u{2026}")
                     .font(.system(size: 10))
                     .foregroundStyle(theme.textMuted)
             }
@@ -304,12 +311,12 @@ struct TheaterPIPView: View {
     // MARK: - Speaking Logic
 
     private var currentSpeakingCharacter: String? {
-        let idx = transcribeService.dialogVoice.currentLineIndex
-        guard transcribeService.dialogVoice.isSpeaking,
+        let idx = dataSource.dialogVoice.currentLineIndex
+        guard dataSource.dialogVoice.isSpeaking,
               idx >= 0,
-              idx < transcribeService.sessionDialog.count
+              idx < dataSource.sessionDialog.count
         else { return nil }
-        return transcribeService.sessionDialog[idx].character
+        return dataSource.sessionDialog[idx].character
     }
 
     private func spriteState(for charName: String, speaking: String?) -> SpriteAnimState {
@@ -330,7 +337,7 @@ struct TheaterPIPView: View {
         HStack(spacing: 2) {
             ForEach(0..<3, id: \.self) { i in
                 Circle()
-                    .fill(Theme.teal)
+                    .fill(TheaterColors.teal)
                     .frame(width: 3, height: 3)
                     .offset(y: dotPhase ? -2 : 0)
                     .animation(

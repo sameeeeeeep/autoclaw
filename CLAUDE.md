@@ -153,6 +153,7 @@ When Qwen flags something in Analyze mode:
 Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card states, toast states, detail view, empty state, dark mode variants, and two architecture diagrams.
 
 ## What's FULLY BUILT
+- **AutoclawTheater module**: Separate SPM library target (Sources/Theater/, 9 files). Fully opt-out — remove dependency + 3 imports. TheaterDataSource protocol at boundary.
 - **Theater PIP** with animated stage: 8 themed backgrounds, 16 character sprites (idle/talking/gesturing), dialogue bubbles, scrolling transcript, liquid glass, intelligence glow while TTS speaks
 - **Theater Mode** with ELI5 dialog: 2-6 line multi-turn TV character exchange (8 themes) with character personality templates (signature phrases, show-universe analogies, catchphrases), in-character term explainers, third-character user framing, TTS voice playback
 - **DialogVoiceService**: Owned Python TTS sidecar (`pip install autoclaw-theater`), auto-launch/kill lifecycle, dialog queuing (buffers new dialog mid-playback), cold opens (play on Theater open from cache), fillers (auto-play on 20s idle timer), voice caching (WAV pre-synthesis), non-repeatable content (deleted from JSON after play), graceful text-only fallback
@@ -203,6 +204,8 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 - Voice caching for instant playback: hash(text + voiceID) → WAV file in .autoclaw/voice-cache/. Cache warming pre-synthesizes all fillers + cold opens in batches of 6. Cold opens play from cache with zero TTS latency (2026-03-30)
 - Prediction Add/Use buttons: "Use" injects at cursor (existing), "Add" appends to board.md todo. Transcript cards get + icon for same (2026-03-30)
 - Theater toggle fully disables: dismissing theater from toast stops filler loop + TTS + queue, not just PIP window (2026-03-30)
+- AutoclawTheater as separate SPM library target: 9 files in Sources/Theater/, main app imports via `import AutoclawTheater`. TheaterDataSource protocol at boundary. Opt-out by removing one Package.swift dependency + 3 imports. Same repo — not a separate GitHub repo since it only exists for Autoclaw (2026-03-30)
+- Voice cache cleanup after playback: WAV files deleted from disk in playCachedConvo defer block after all audio has been read into memory and played (2026-03-30)
 - Theater PIP as separate floating window: animated stage with sprites/backgrounds lives in its own PIP, persists independently from toast. Only dismisses on explicit user action or session end (2026-03-29)
 - Owned TTS sidecar as separate pip package: `pip install autoclaw-theater` — Autoclaw searches PATH for CLI first, falls back to server.py in known dirs. Process managed by DialogVoiceService, killed on app quit (2026-03-29)
 - Dialog queuing: new dialog arriving mid-playback is buffered, played after current batch. Cold open (random character quip from theme templates) bridges the gap — no silent pause between batches (2026-03-29)
@@ -249,10 +252,10 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 ## Tech Stack
 Swift 6.3 + SwiftUI, SPM (Package.swift), WhisperKit (base.en, Core ML), NSStatusItem, toast cards, NSPanel side panel, SQLite/GRDB, launchd, SKILL.md OpenClaw registry, macOS 14+, Ollama (Qwen 2.5 3B)
 
-## File Inventory (54 files)
+## File Inventory (58 files)
 **Core:** App.swift, AppDelegate.swift, AppState.swift
-**Voice:** VoiceService.swift, WhisperKitService.swift, TranscribeService.swift, CursorInjector.swift, DialogVoiceService.swift
-**Theater:** TheaterPIPView.swift, TheaterPIPWindow.swift, TheaterSprite.swift, TheaterScene.swift
+**Voice:** VoiceService.swift, WhisperKitService.swift, TranscribeService.swift, CursorInjector.swift
+**Theater (AutoclawTheater module — Sources/Theater/):** TheaterTypes.swift, TheaterTheme.swift, TheaterDataSource.swift, TheaterLog.swift, DialogVoiceService.swift, TheaterPIPView.swift, TheaterPIPWindow.swift, TheaterSprite.swift, TheaterScene.swift
 **Board:** BoardPIPView.swift, BoardPIPWindow.swift
 **Analyze:** AnalyzePipeline.swift, ContextBuffer.swift, FrictionDetector.swift, WorkflowMatcher.swift
 **Sensors:** ActiveWindowService.swift, ClipboardMonitor.swift, ScreenOCR.swift, BrowserBridge.swift, KeyFrameAnalyzer.swift, ScreenCaptureStream.swift, FileActivityMonitor.swift
