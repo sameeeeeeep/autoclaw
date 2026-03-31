@@ -1,27 +1,19 @@
 # Autoclaw — CLAUDE.md
 
-## Current Focus (2026-03-30)
-- **PM Agent architecture**: Haiku runs as a product/project manager in parallel to the main session. Sandboxed to `.autoclaw/` folder — reads session JSONL + CLAUDE.md/README via `--allowedTools Read,Glob,Write`. Maintains a kanban board (`board.md`), predicts next product actions, updates board on every round.
-- **Board PIP**: Floating kanban widget (BoardPIPView/BoardPIPWindow) — separate NSPanel positioned bottom-left. Shows todo/in-progress/done with status indicators. Tapping any item injects at cursor + copies to clipboard. Toggle via icon in toast header.
-- **Prediction Add/Use**: Prediction cards now have both "Add" (saves to board.md todo) and "Use" (injects at cursor). Transcript cards have `+` icon to add to board todo.
-- **Filler content system**: Pre-written multi-turn dialog fillers (3-4 per theme, all 8 themes) in `.autoclaw/fillers.json`. Auto-plays on 20s timer when idle. Shows "Playing filler" indicator (purple) in Theater PIP. Non-repeatable — fillers are permanently deleted from JSON after playing.
-- **Cold opens**: Project-specific cold open dialogs in `.autoclaw/cold-opens.json` (2 per theme). Play immediately when Theater opens (from voice cache if available) while Haiku primes in background. Non-repeatable — deleted from JSON after playing.
-- **Voice caching**: Pre-synthesize all fillers + cold opens to WAV files in `.autoclaw/voice-cache/`. Cache key = hash(text + voiceID). Cache warming runs in background batches of 6 when sidecar ready. Cold opens play from cache with zero TTS latency.
-- **Theater toggle cleanup**: Disabling theater from toast fully stops everything — filler loop, TTS playback, queue. Same on session end.
-- **Theater PIP**: Floating Picture-in-Picture window with animated stage — themed background scenes (8 shows), chibi-style character sprites with idle/talking/gesturing animations, dialogue bubbles, and scrolling transcript. Persists on screen while user works.
-- **Theater Mode**: Optional toggle — ELI5 dialog generation + TTS voice playback. When enabled, tempo-adaptive dialog (2-6 lines based on session pace) with in-character term explainers. User messages referenced as a third character from the show.
-- **Owned TTS sidecar**: Autoclaw launches and manages the Python TTS server process directly (Pocket TTS on port 7893). Separate pip-installable package: `pip install autoclaw-theater`. Auto-starts when theater PIP opens, auto-kills on app quit. Optional — falls back to text-only if not installed.
-- **Dialog queuing + cold opens**: New dialog arriving mid-playback is buffered (appended, not replaced) and played after the current batch finishes. Cold opens bridge the gap.
-- **Session tempo tracking**: Tracks JSONL write cadence to classify session pace (rapid/active/relaxed/idle). Dialog turn count adapts: 2 lines during rapid exchanges, 6 lines during relaxed builds.
-- **JSONL file watcher**: DispatchSource file watcher on Claude Code session JSONL. 4s debounce. Zero CPU when idle.
-- **Liquid glass UI**: macOS 26 Tahoe `.glassEffect()` on toast + theater PIP + board PIP (with fallback for older macOS). Intelligence glow on borders while Haiku generates or TTS speaks.
-- **Transcribe pipeline**: Raw WhisperKit output → inject immediately at cursor → enhance in background.
-- **Next**: OpenClaw/ClawHub lazy skill discovery, Haiku cloud routing for Analyze mode, polish + ship.
+## Current Focus (2026-03-31)
+- **Product positioning**: Autoclaw is the agentic interface layer for macOS. When agentic intelligence lives only within apps, the cognitive load falls on the user. Autoclaw absorbs that load at the OS level. Phase 1: voice-first Claude Code interface. Phase 2: workflow learning. Phase 3: ambient detection.
+- **Agentic enhance**: 3-branch routing — code apps get agentic prompt engineering (speech → effective prompt), non-code apps get tone-aware rewrite (no project context leaking into emails). Preserves user references ("these numbers" stays as-is — Claude has conversation context). Web app resolution: "Google Chrome" → "Gmail"/"Notion"/"Claude" via effectiveAppName.
+- **PM Agent**: Haiku as product manager — 6 PM thinking lenses, casual plain-English recommendations (one sentence, no jargon), sandboxed to `.autoclaw/` folder, maintains kanban board. Refresh prompt reminds formatting every round.
+- **Project/session switching**: Fully rewires file paths, JSONL watcher, and session context provider on switch. No more cross-project contamination.
+- **Theater dynamics**: Camera system (5 shot types, lerp transitions), 24 scene locations (3 per theme), ambient lighting toward speaker.
+- **Next**: Fix Qwen confidence bug (Analyze mode broken), fix enhanced text field race, CLI timeouts, then polish + ship.
 
 ## What this is
-Native macOS app (Swift/SwiftUI) — ambient AI at the OS level. Not a copilot, not a chatbot. An agentic intelligence layer.
+Native macOS app (Swift/SwiftUI) — the agentic interface layer for macOS. Not a copilot, not a chatbot. Absorbs the cognitive load between you and AI tools.
 
-**Tagline:** autoclaw — ambient AI for macOS | **Org:** The Last Prompt (thelastprompt.ai)
+**Vision:** When agentic intelligence lives only within apps, the cognitive load is on the user. Autoclaw is agentic intelligence at the interface layer — it takes that load off.
+
+**Tagline:** autoclaw — the agentic interface for macOS | **Org:** The Last Prompt (thelastprompt.ai)
 
 ## Four Modes
 

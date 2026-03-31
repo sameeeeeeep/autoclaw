@@ -423,9 +423,17 @@ final class AppState: ObservableObject {
         transcribeService.projectContext = selectedProject?.claudeMDSummary ?? ""
         transcribeService.sessionContext = buildSessionContext()
         transcribeService.suggestedPrompts = []
+        // Update file paths so Haiku reads the RIGHT project
+        transcribeService.projectPath = selectedProject?.path
+        transcribeService.sessionJSONLPath = selectedClaudeSession?.filePath
+        transcribeService.sessionContextProvider = { [weak self] in
+            self?.buildSessionContext() ?? ""
+        }
         transcribeService.resetHaikuSession()  // New project = new Haiku session
-        DebugLog.log("[PrePrompt] switchToProject(\(project.name)) — context: \(transcribeService.projectContext.count) chars, session: \(transcribeService.sessionContext.count) chars, autoSession: \(selectedClaudeSession?.title.prefix(30) ?? "none")")
+        DebugLog.log("[PrePrompt] switchToProject(\(project.name)) — path: \(project.path), context: \(transcribeService.projectContext.count) chars, session: \(transcribeService.sessionContext.count) chars, autoSession: \(selectedClaudeSession?.title.prefix(30) ?? "none")")
         transcribeService.generatePrePrompt()
+        // Watch the NEW project's JSONL — stops watching old one
+        transcribeService.startAutoRefresh(watchingFile: selectedClaudeSession?.filePath)
     }
 
     /// Switch to a Claude Code session and regenerate pre-prompt
@@ -433,9 +441,15 @@ final class AppState: ObservableObject {
         selectedClaudeSession = session
         transcribeService.sessionContext = buildSessionContext()
         transcribeService.suggestedPrompts = []
+        // Update JSONL path + watcher for the new session
+        transcribeService.sessionJSONLPath = session.filePath
+        transcribeService.sessionContextProvider = { [weak self] in
+            self?.buildSessionContext() ?? ""
+        }
         transcribeService.resetHaikuSession()  // New session = new Haiku session
         DebugLog.log("[PrePrompt] switchToClaudeSession(\(session.title.prefix(40))) — session context: \(transcribeService.sessionContext.count) chars")
         transcribeService.generatePrePrompt()
+        transcribeService.startAutoRefresh(watchingFile: session.filePath)
     }
 
     /// Refresh a project's context summary from disk.
@@ -878,7 +892,9 @@ final class AppState: ObservableObject {
             }
             .store(in: &cancellables)
 
-        activeWindowService.$appName
+        // Use effective app name (resolved web app like "Gmail" instead of raw "Google Chrome")
+        Publishers.CombineLatest(activeWindowService.$appName, activeWindowService.$resolvedApp)
+            .map { appName, resolved in resolved?.appName ?? appName }
             .assign(to: &$activeApp)
 
         activeWindowService.$windowTitle

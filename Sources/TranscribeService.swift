@@ -295,7 +295,17 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
         promptTask = Task { @MainActor in
             defer { isGeneratingPrompt = false }
 
-            let followUp = "User just dictated: \"\(String(text.prefix(500)))\"\nReply with ONLY the JSON object (predictions + dialog), nothing else."
+            // Build previous predictions context for continuity
+            let prevPredictions = suggestedPrompts.prefix(3).map { "- \($0)" }.joined(separator: "\n")
+            let prevContext = prevPredictions.isEmpty ? "" : "\nYour previous recommendations were:\n\(prevPredictions)\n"
+
+            let followUp = """
+            User just dictated into \(activeApp): "\(String(text.prefix(500)))"
+            \(prevContext)
+            Think PM: Did the user follow your previous recommendations? If yes, recommend the NEXT thing that matters. If no, were your recommendations off-base? Adjust.
+            What are the 2 highest-impact things the user should tell Claude to build/fix next?
+            Reply with ONLY the JSON object (predictions + dialog), nothing else.
+            """
 
             do {
                 let result = try await callClaudeCLI(prompt: followUp, model: "haiku", sessionId: sessionId, resume: true)
@@ -531,14 +541,17 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
 
         let courseCorrect = suggestedPrompts.isEmpty
             ? ""
-            : "Were previous predictions close? If yes, predict the NEXT step after what just happened.\nIf no, re-read the activity and predict fresh.\n\n"
+            : "Did the user follow your previous recommendations? If yes, recommend the next thing that matters.\nIf no, re-assess — what does the product need most right now?\n\n"
 
         let followUp = """
         \(prevPredictions)\(completedBlock)\
         Session update — re-read the last ~100 lines of the JSONL to see what changed.
         Update the board (move completed items to Done, add new Todo items you think should happen).
+        Think PM: what error paths are being skipped? What breaks for a real user? What dependencies are being ignored? What's shipping-ready vs. demo-only?
+        Add [P0/P1/P2] tags to new board items. Flag things the developer is missing.
         \(courseCorrect)\
-        Then reply with ONLY the JSON object\(dialogHint) — predictions for what's NEXT.
+        REMINDER: Predictions = one casual sentence, plain English, no jargon or file/function names.
+        Then reply with ONLY the JSON object\(dialogHint).
         """
 
         do {
@@ -724,20 +737,38 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
                        - Keep items concise (one line each). Cap at 8 todo, 3 in-progress, 15 done.
                        - Write the updated board back to the board.md file.
 
-                    2. RETURN TWO PREDICTIONS — the next things the user will tell Claude to build
+                    2. RETURN TWO RECOMMENDATIONS — what should be done next to make this product better
                     \(dialogInstructions)
                     \(personalityGuide)
 
                     === YOUR ROLE ===
 
-                    You're a PM, not a code reviewer. Think product: what ships next, what connects to what, what gaps remain.
-                    Everything in the session is DONE. Predict what HASN'T happened yet.
-                    You can also add tasks to the board that the user hasn't mentioned — things a good PM would flag.
+                    You're a PM, not a code reviewer. You think about the PRODUCT, not the code.
 
-                    Predictions:
-                    - Start with a verb (add, wire, fix, implement, connect)
-                    - Reference actual features/files from the session or project brief
-                    - Under 100 chars, actionable by Claude
+                    When you read the session, ask yourself:
+                    - What did the user just build? Does it actually connect to the rest of the product?
+                    - What error paths are they ignoring? What breaks if the network is down, the API is slow, or the user does something unexpected?
+                    - Are they going deep on one feature while other areas rot? Flag imbalance.
+                    - What's the user experience end-to-end? Would a real user hit a wall somewhere?
+                    - Are there dependencies they're not seeing? (X won't work until Y is fixed)
+                    - What would you flag in a launch review? What's shipping vs. what's a demo?
+
+                    Add tasks to the board the user hasn't mentioned — things a PM would catch that a developer in flow wouldn't.
+                    Tag board items with [P0] (blocks ship), [P1] (should fix), [P2] (nice to have).
+
+                    Recommendations (shown as tappable cards in a small toast — user taps one, it goes straight to Claude Code):
+                    - Write it exactly how someone would say it out loud to a colleague
+                    - Plain English only. No function names, no file names, no technical jargon
+                    - One sentence max. Keep it casual and clear.
+                    - NEVER echo what the user is currently doing or just did
+                    - NEVER suggest testing, verifying, reviewing, or validating
+
+                    Examples:
+                    - "make the board refresh live when things change"
+                    - "add a timeout so the app doesn't hang when haiku is slow"
+                    - "make enhance work when I'm dictating into Slack not just Claude"
+                    - "fix the bug where the enhanced text replaces the wrong field"
+                    - "the analyze mode isn't detecting anything, figure out why"
 
                     === YOUR FILES ===
 
@@ -937,13 +968,13 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
 
         let appContext: String
         switch app.lowercased() {
-        case let a where a.contains("gmail") || a.contains("mail"):
+        case let a where a.contains("gmail") || a.contains("mail") || a.contains("outlook"):
             appContext = "email — professional and clear"
-        case let a where a.contains("slack") || a.contains("discord") || a.contains("teams"):
+        case let a where a.contains("slack") || a.contains("discord") || a.contains("teams") || a.contains("messages"):
             appContext = "messaging — casual but clear"
-        case let a where a.contains("notion") || a.contains("docs") || a.contains("word"):
+        case let a where a.contains("notion") || a.contains("docs") || a.contains("word") || a.contains("coda") || a.contains("google docs"):
             appContext = "document — polished and flowing"
-        case let a where a.contains("twitter") || a.contains("x.com") || a.contains("linkedin"):
+        case let a where a.contains("twitter") || a.contains("x.com") || a.contains("linkedin") || a.contains("x/"):
             appContext = "social media — punchy and engaging"
         case let a where a.contains("terminal") || a.contains("xcode") || a.contains("code"):
             appContext = "code/terminal — technical and precise"
@@ -951,43 +982,91 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
             appContext = "general — clear and effective"
         }
 
-        // Build context block from project + session (if available)
+        // Determine if this is a code/dev context FIRST — controls whether project context is relevant
+        let appLower = app.lowercased()
+        let isCodeContext = appLower.contains("terminal")
+            || appLower.contains("claude")
+            || appLower.contains("xcode")
+            || appLower.contains("code")   // VS Code, Cursor ("Cursor" contains "cursor"), Claude Code
+            || appLower.contains("warp")
+            || appLower.contains("iterm")
+            || appLower.contains("cursor")
+            || appLower.contains("alacritty")
+            || appLower.contains("kitty")
+            || appLower.contains("hyper")
+            || appLower.contains("github")  // GitHub in browser (resolved by WebAppResolver)
+            || appLower.contains("linear")  // Project management tools benefit from project context
+            || appLower.contains("jira")
+
+        // Only inject project/session context for code/dev apps — Gmail doesn't need your CLAUDE.md
         var contextBlock = ""
-        if !projectContext.isEmpty {
-            contextBlock += "\nProject context:\n\(projectContext)\n"
-        }
-        if !sessionContext.isEmpty {
-            contextBlock += "\nRecent session activity:\n\(sessionContext)\n"
+        if isCodeContext {
+            if !projectContext.isEmpty {
+                contextBlock += "\nProject context:\n\(projectContext)\n"
+            }
+            if !sessionContext.isEmpty {
+                contextBlock += "\nRecent session activity:\n\(sessionContext)\n"
+            }
         }
 
         let prompt: String
-        if contextBlock.isEmpty {
+        if isCodeContext && !contextBlock.isEmpty {
+            // Agentic enhance: translate natural speech into an effective prompt for Claude
             prompt = """
-            Rewrite this dictated text. Keep the speaker's voice and intent. \
-            Make it sharper and clearer. If it's already clean, return it mostly as-is. \
-            Remove filler words and false starts. \
-            Tone: \(appContext). Active app: \(app). \
-            Return ONLY the improved text, nothing else.
+            You are an invisible layer between a developer speaking naturally and Claude Code receiving their instruction.
+            Your job: turn casual speech into the clearest possible prompt — so the developer never has to think about "how to prompt."
+            Destination app: \(app). Context: \(appContext).
 
-            "\(text)"
-            """
-        } else {
-            prompt = """
-            Enhance this dictated text. You have project context below. \
-            RULES: \
-            - Fix grammar, remove filler, tighten phrasing \
-            - If the speaker references something vague that clearly maps to a specific file/function/variable from context, substitute the specific name \
-            - If the speaker's intent is ambiguous, preserve the ambiguity — do NOT guess \
-            - NEVER add details the speaker didn't reference or imply \
-            - NEVER change the speaker's intent or add instructions they didn't give \
-            - Keep their voice — if they're casual, stay casual \
-            Tone: \(appContext). Active app: \(app).
-            \(contextBlock)
-            Return ONLY the enhanced text, nothing else. Do NOT wrap your response in quotes.
-
+            THE DEVELOPER SAID (raw dictation):
             ---
             \(text)
             ---
+
+            PROJECT CONTEXT:
+            \(contextBlock)
+
+            TRANSFORM RULES:
+            - Keep it SHORT. The enhanced version should be roughly the same length as what they said.
+            - PRESERVE their words and references. If they say "these numbers" or "that thing", keep it — Claude Code has the conversation context and knows what they mean. You do NOT.
+            - NEVER expand vague references into lists or specifics you pulled from project context. The user is talking to Claude mid-conversation — Claude already knows what "these", "that", "it" refers to.
+            - NEVER add details, constraints, acceptance criteria, or steps they didn't say
+            - Clean up grammar, remove filler words and false starts
+            - Structure multi-step requests into clear steps IF they actually said multiple things
+            - Do NOT add meta-commentary — output is the prompt itself
+
+            Return ONLY the enhanced prompt, nothing else. No quotes, no explanation.
+            """
+        } else if isCodeContext && contextBlock.isEmpty {
+            // Code context but no project info — still give a code-aware prompt, just without project specifics
+            prompt = """
+            You are an invisible layer between a developer speaking naturally and a coding tool receiving their instruction.
+            Turn their casual speech into a clear, actionable prompt. Destination: \(app).
+
+            THE DEVELOPER SAID (raw dictation):
+            ---
+            \(text)
+            ---
+
+            TRANSFORM RULES:
+            - Identify their INTENT — what do they want built/fixed/changed?
+            - Structure for the coding tool: if multiple steps, break them out clearly
+            - Add implicit constraints: "don't break existing behavior", "keep the same interface"
+            - Remove filler words, false starts, verbal tics
+            - PRESERVE their intent exactly — add clarity, NEVER change what they want
+            - Do NOT add meta-commentary — output is the prompt itself
+
+            Return ONLY the enhanced prompt, nothing else. No quotes, no explanation.
+            """
+        } else {
+            // Non-code app (Gmail, Slack, Notion, etc.) — clean rewrite with tone awareness, NO project context
+            prompt = """
+            Rewrite this dictated text for \(app). Keep the speaker's voice and intent. \
+            Make it sharper and clearer. If it's already clean, return it mostly as-is. \
+            Remove filler words and false starts. \
+            Tone: \(appContext). \
+            Return ONLY the improved text, nothing else.
+
+            "\(text)"
             """
         }
 

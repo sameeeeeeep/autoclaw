@@ -30,6 +30,17 @@ public struct TheaterPIPView<Source: TheaterDataSource>: View {
     // displayedLineIndex drives bubble + transcript highlight, synced from TTS currentLineIndex
     @State private var displayedLineIndex: Int = -1
 
+    // Camera system — dynamic framing based on who's speaking
+    @State private var cameraOffsetX: CGFloat = 0
+    @State private var cameraOffsetY: CGFloat = 0
+    @State private var cameraZoom: CGFloat = 1.0
+    @State private var lastSpeaker: String?
+    @State private var shotHoldCount: Int = 0 // ticks held on current shot
+
+    // Scene location changes — cycles through variant backgrounds between dialog batches
+    @State private var sceneVariant: Int = 0
+    @State private var lastDialogCount: Int = 0
+
     public var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -69,8 +80,16 @@ public struct TheaterPIPView<Source: TheaterDataSource>: View {
             state: dataSource.dialogVoice.isSpeaking ? .thinking : .off
         )
         .shadow(color: .black.opacity(colorScheme == .dark ? 0.5 : 0.12), radius: 20, y: 6)
-        .onAppear { startAnimationLoop() }
+        .onAppear { startAnimationLoop(); lastDialogCount = dataSource.sessionDialog.count }
         .onDisappear { stopAnimationLoop() }
+        .onChange(of: dataSource.sessionDialog.count) {
+            let newCount = dataSource.sessionDialog.count
+            // Scene changes when a new batch arrives (jump of 2+ lines = new batch)
+            if newCount >= lastDialogCount + 2 {
+                sceneVariant += 1
+            }
+            lastDialogCount = newCount
+        }
         .onChange(of: dataSource.dialogVoice.currentLineIndex) {
             let idx = dataSource.dialogVoice.currentLineIndex
             if idx >= 0 && idx < dataSource.sessionDialog.count {
@@ -140,8 +159,15 @@ public struct TheaterPIPView<Source: TheaterDataSource>: View {
         let speakingChar = currentSpeakingCharacter
 
         return ZStack {
-            // Background scene
-            TheaterSceneBackground(themeId: dialogTheme.id, animTick: animTick)
+            // Background scene — location changes between batches + ambient dynamics
+            TheaterSceneBackground(
+                themeId: dialogTheme.id,
+                animTick: animTick,
+                isSpeaking: currentSpeakingCharacter != nil,
+                speakingChar: currentSpeakingCharacter == dialogTheme.char1 ? 1
+                    : currentSpeakingCharacter == dialogTheme.char2 ? 2 : 0,
+                sceneVariant: sceneVariant
+            )
 
             // Stage floor gradient (subtle, grounds the characters)
             VStack {
@@ -203,6 +229,9 @@ public struct TheaterPIPView<Source: TheaterDataSource>: View {
                     .id("bubble-\(displayedLineIndex)")
             }
         }
+        // Camera transform — zoom + pan applied to entire stage
+        .scaleEffect(cameraZoom, anchor: .center)
+        .offset(x: cameraOffsetX, y: cameraOffsetY)
     }
 
     // MARK: - Dialog Bubble
@@ -299,6 +328,7 @@ public struct TheaterPIPView<Source: TheaterDataSource>: View {
                 animTick += 1
                 char1Anim.advance()
                 char2Anim.advance()
+                updateCamera()
             }
         }
     }
@@ -324,6 +354,90 @@ public struct TheaterPIPView<Source: TheaterDataSource>: View {
         if speaking == charName { return .talking }
         // The other character gestures/reacts while listening
         return .gesturing
+    }
+
+    // MARK: - Camera System
+
+    /// Camera shot types that create visual variety
+    private enum CameraShot {
+        case wide            // Both characters visible, default framing
+        case closeLeft       // Zoom into left character (char1 speaking)
+        case closeRight      // Zoom into right character (char2 speaking)
+        case overShoulder    // Slight offset + zoom, looking past listener
+        case dramatic        // Tight zoom, slight tilt feel via Y offset
+    }
+
+    /// Pick a shot based on conversation flow — avoids repeating the same framing
+    private func pickShot(speaker: String?) -> CameraShot {
+        guard let speaker else { return .wide }
+
+        let isChar1 = speaker == dialogTheme.char1
+        let speakerChanged = speaker != lastSpeaker
+
+        // After holding a shot for a while, switch it up
+        if !speakerChanged && shotHoldCount > 30 { // ~4 seconds at 7fps
+            // Long speech — go dramatic
+            return .dramatic
+        }
+
+        if speakerChanged {
+            // Speaker just changed — alternate between close-up and over-shoulder
+            let lineIdx = displayedLineIndex
+            if lineIdx % 3 == 0 {
+                return isChar1 ? .closeLeft : .closeRight
+            } else if lineIdx % 3 == 1 {
+                return .overShoulder
+            } else {
+                return .wide // Breather — pull back to wide every 3rd exchange
+            }
+        }
+
+        // Same speaker continuing — hold current framing
+        return isChar1 ? .closeLeft : .closeRight
+    }
+
+    /// Apply camera shot as smooth offset + zoom targets
+    private func updateCamera() {
+        let speaker = currentSpeakingCharacter
+        let shot = pickShot(speaker: speaker)
+
+        // Track speaker changes for shot variety
+        if speaker != lastSpeaker {
+            lastSpeaker = speaker
+            shotHoldCount = 0
+        } else {
+            shotHoldCount += 1
+        }
+
+        let targetX: CGFloat
+        let targetY: CGFloat
+        let targetZoom: CGFloat
+
+        switch shot {
+        case .wide:
+            targetX = 0; targetY = 0; targetZoom = 1.0
+        case .closeLeft:
+            targetX = 35; targetY = 8; targetZoom = 1.18
+        case .closeRight:
+            targetX = -35; targetY = 8; targetZoom = 1.18
+        case .overShoulder:
+            let isChar1 = (speaker == dialogTheme.char1)
+            // Look from behind the listener toward the speaker
+            targetX = isChar1 ? 15 : -15
+            targetY = 5
+            targetZoom = 1.12
+        case .dramatic:
+            let isChar1 = (speaker == dialogTheme.char1)
+            targetX = isChar1 ? 45 : -45
+            targetY = 12
+            targetZoom = 1.28
+        }
+
+        // Smooth lerp toward target (no jarring cuts)
+        let lerp: CGFloat = 0.06
+        cameraOffsetX += (targetX - cameraOffsetX) * lerp
+        cameraOffsetY += (targetY - cameraOffsetY) * lerp
+        cameraZoom += (targetZoom - cameraZoom) * lerp
     }
 
     // Bubble timing is now driven by DialogVoiceService.currentLineIndex

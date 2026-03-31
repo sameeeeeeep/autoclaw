@@ -5,7 +5,7 @@
 <h1 align="center">autoclaw</h1>
 
 <p align="center">
-  <strong>Ambient AI for macOS. Watches your session. Predicts your next move. Speaks it into existence.</strong>
+  <strong>The agentic interface layer for macOS. Collapses the cognitive load between you and AI.</strong>
 </p>
 
 <p align="center">
@@ -22,66 +22,103 @@
 
 ---
 
-You're deep in a Claude Code session. Claude just finished wiring up a component. You know what comes next. Instead of typing:
+## The problem
 
-**Fn.** Two cards appear — autoclaw already read your session and knows what you'll say. Tap one. Or speak. Clean text lands at your cursor. Claude picks it up and runs.
+When agentic intelligence lives only within apps, the cognitive load falls on *you* — knowing what to do, how to ask, when to ask, which app to use, prompt engineering, skill availability. The AI is capable. The bottleneck is the interface.
 
-No typing. No context switch. No friction.
+## The solution
+
+Agentic intelligence that lives at the **interface layer** — between you and every AI tool — to absorb that cognitive load entirely.
+
+**autoclaw** is this layer for macOS.
 
 Built by [The Last Prompt](https://thelastprompt.ai).
 
 ---
 
-## The loop
+## Phase 1 — Voice-first Claude Code interface (now)
+
+A parallel low-intelligence pipeline between you and Claude Code that makes interaction seamless:
 
 ```
 You think it → You say it → Claude builds it
 ```
 
-That's the whole product. Everything below exists to make that loop instant.
+**Fn.** Two cards appear — autoclaw already read your session and knows what you'll say. Tap one. Or speak. Clean text lands at your cursor. Claude picks it up and runs.
 
----
+No typing. No prompt engineering. No context switching.
 
-## How it works
+### How it works
 
 ```
 Your Claude Code session (JSONL)
        │ watches live
        ▼
   Fn → Toast appears
-       ├── 2 prediction cards (tap "Use" or "Add" to board)
+       ├── 2 PM recommendation cards (tap "Use" or "Add" to board)
        ├── Mic goes live
        │     │
        │     ▼ You speak naturally
        │     │
        │     ├── WhisperKit (local, Neural Engine)
        │     │     ├── Raw text → cursor INSTANTLY
-       │     │     └── Smart Enhance (background) → file names,
-       │     │         function names, session context → accept or keep raw
+       │     │     └── Agentic Enhance (background) → turns casual speech
+       │     │         into effective prompts. Accept or keep raw.
        │     │
        │     └── + button saves transcript to kanban board
        │
        └── Theater PIP (optional)
              TV characters narrate your session ELI5-style
-             with voice playback, animations, and zero shame
 ```
 
-### Predictions
+### PM agent
 
-A persistent Haiku session reads your **CLAUDE.md**, your **live session JSONL**, and your **coding tempo** — then predicts the two most likely things you'll tell Claude to build next. Not generic suggestions. Specific commands with real file names from your session:
+A persistent Haiku session runs as your product manager — not a code reviewer, a PM. It reads your CLAUDE.md, your live session JSONL, and your coding tempo, then asks:
 
-> *"wire the sprite animations to dialog state in TheaterPIPView"*
-> *"add error handling for TTS sidecar connection on port 7893"*
+- What did you just build? Does it connect to the rest of the product?
+- What error paths are you ignoring?
+- Are you going deep on one feature while other areas rot?
+- What would a PM flag in a launch review?
 
-Predictions refresh automatically via JSONL file watcher — event-driven, zero CPU when idle. A PM agent (Haiku) runs in parallel, maintaining a kanban board of your project and feeding predictions from product context, not just code diffs.
+Recommendations show as tappable cards in the toast — plain English, one sentence, the way you'd say it to a colleague:
 
-### Smart enhance
+> *"make the board refresh live when things change"*
+> *"add a timeout so the app doesn't hang when haiku is slow"*
 
-When you speak, enhancement doesn't just fix grammar. It has your full project context — when you say *"fix the bug in the toast"*, it knows you mean `UnifiedToastView.swift`. Conservative by design — fills in specifics you clearly referenced, never puts words in your mouth.
+Predictions refresh automatically via JSONL file watcher. The PM also maintains a kanban board (`.autoclaw/board.md`) — moving completed work to Done, surfacing new todos, tagging priorities.
+
+### Agentic enhance
+
+Enhancement isn't grammar cleanup. It's an invisible prompt engineering layer:
+
+- **In Claude Code / terminals:** Translates casual speech into effective prompts. "fix that thing with the toast" becomes a structured instruction with the right file and function names — but preserves your references when Claude already has context ("update these numbers" stays as-is because Claude knows what "these" means).
+- **In Gmail / Slack / Notion:** Clean tone-aware rewrite. No project context leaking into your emails.
+- **Context-aware routing:** Autoclaw resolves web apps — "Google Chrome" becomes "Gmail", "Notion", "Claude" — so the right enhance path fires automatically.
 
 ### Works everywhere
 
-Voice-to-text works in any app — Slack, VS Code, email, Notion. Context-aware tone adjustment: casual for Slack, precise for terminal, polished for docs.
+Voice-to-text works in any app. Context-aware tone: casual for Slack, professional for email, precise for terminal, polished for docs. Project context only injects when relevant.
+
+---
+
+## Phase 2 — Workflow learning (built, shipping next)
+
+Autoclaw watches you work, extracts patterns, and creates reusable automations — without you ever opening an automation builder.
+
+| Mode | What it does | Status |
+|------|-------------|--------|
+| **Learn** | Do something once, Claude extracts a reusable workflow template | Built |
+| **Task** | Speak or paste a command, Claude handles it with full MCP access | Built |
+
+---
+
+## Phase 3 — Ambient detection (built, shipping later)
+
+Autoclaw recognizes tasks ambiently and offers to handle them. You approve or ignore. The OS becomes the trigger, not you.
+
+| Mode | What it does | Status |
+|------|-------------|--------|
+| **Analyze** | Watches your screen, detects actionable moments, offers to help before you ask | Built |
 
 ---
 
@@ -91,16 +128,12 @@ Voice-to-text works in any app — Slack, VS Code, email, Notion. Context-aware 
   <em>[ screenshot: Theater PIP — Gilfoyle & Dinesh roasting your code decisions ]</em>
 </p>
 
-Floating PIP with an animated stage. Themed backgrounds, chibi character sprites with idle/talking/gesturing animations, dialogue bubbles. TV characters watch your Claude Code session and explain what's happening — completely in character.
+Floating PIP with an animated stage. 24 themed scene locations, chibi character sprites with idle/talking/gesturing animations, camera system with 5 shot types, dialogue bubbles. TV characters watch your Claude Code session and explain what's happening — completely in character.
 
 > **Gilfoyle:** A DispatchSource. It's basically a file stalker.
 > **Dinesh:** So it watches files? Like my ex watches my Instagram?
 
-8 character duos across 8 shows. Dialog adapts to your coding pace. Cold opens play instantly when Theater opens. Fillers bridge quiet moments. Voice playback via owned TTS sidecar. Non-repeatable — every cold open and filler plays exactly once, then it's gone.
-
-Your messages get referenced as a third character from the show — you're Richard in Silicon Valley, Michael in The Office, Jerry in Rick and Morty.
-
-Theater lives in its own SPM module (`AutoclawTheater`). Don't want it? Remove one line from `Package.swift` and three imports. The core app works without it.
+8 character duos across 8 shows. Dialog adapts to your coding pace. Cold opens play instantly. Fillers bridge quiet moments. Voice playback via owned TTS sidecar. Non-repeatable — every performance plays exactly once.
 
 <details>
 <summary><strong>Character pairs</strong></summary>
@@ -128,7 +161,7 @@ pip install autoclaw-theater
 # autoclaw auto-launches the voice server when Theater Mode is active
 ```
 
-First install downloads ~500MB of model weights (once). Voices are cached to `.autoclaw/voice-cache/` — cold opens play from cache with zero TTS latency. [Autoclaw Theater repo](https://github.com/sameeeeeeep/autoclaw-theater)
+First install downloads ~500MB of model weights (once). Voices are cached to `.autoclaw/voice-cache/`. [Autoclaw Theater repo](https://github.com/sameeeeeeep/autoclaw-theater)
 
 </details>
 
@@ -136,26 +169,13 @@ First install downloads ~500MB of model weights (once). Voices are cached to `.a
 
 ## Board
 
-A floating kanban widget that tracks your session. Haiku maintains it as a PM agent — moving completed work to Done, surfacing new todos based on session context.
+A floating kanban widget that tracks your project. The PM agent maintains it — moving completed work to Done, surfacing new todos based on what's happening in your session.
 
 - **Add** a prediction to the board for later
 - **Tap** any board item to inject it at your cursor + clipboard
 - **+** on any transcript to save it as a todo
 
-Toggle from the toast header. Lives at bottom-left, Theater lives at bottom-right.
-
----
-
-## Four modes
-
-Autoclaw is a four-mode ambient AI layer. Each mode adds a new capability:
-
-| Mode | What it does | Status |
-|------|-------------|--------|
-| **Transcribe** | Voice-to-text, predictions, smart enhance, theater, board | **Shipping** |
-| **Analyze** | Watches your screen, detects friction, offers to help before you ask | Built |
-| **Task** | Speak or paste a command, Claude handles it with full MCP access | Built |
-| **Learn** | Do something once, Claude extracts a reusable template | Built |
+Toggle from the toast header. Lives at bottom-left, Theater at bottom-right.
 
 ---
 
@@ -203,7 +223,7 @@ pip install autoclaw-theater     # Theater mode voice playback
 
 ## Under the hood
 
-58 Swift files across 2 SPM targets. Theater is a separate `AutoclawTheater` library module — fully opt-out if you don't want the theatrics. WhisperKit on Neural Engine. Persistent Haiku sessions via Claude CLI. JSONL file watcher with 4s debounce. Session tempo tracking. Voice caching. PM agent with sandboxed file access. Liquid glass UI on macOS 26 Tahoe.
+58 Swift files across 2 SPM targets. Theater is a separate `AutoclawTheater` library module — fully opt-out. WhisperKit on Neural Engine. Persistent Haiku sessions via Claude CLI. JSONL file watcher with 4s debounce. Session tempo tracking. Voice caching. PM agent with sandboxed file access. Liquid glass UI on macOS 26 Tahoe.
 
 Full architecture, sensor pipeline, file inventory, and every design decision in [CLAUDE.md](CLAUDE.md).
 
