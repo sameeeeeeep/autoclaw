@@ -21,9 +21,28 @@ struct UnifiedToastView: View {
     @State private var inputText = ""
     @FocusState private var inputFocused: Bool
     @State private var addedToBoard: String?  // flash feedback
+    @State private var copiedText: String?     // flash feedback for copy
 
     @Environment(\.colorScheme) private var colorScheme
     private var theme: Theme { Theme(colorScheme: colorScheme) }
+
+    /// Glow color: green when user is speaking, orange when intelligence is working, off otherwise
+    private var toastGlowColor: Color {
+        if appState.transcribeStatus == .listening {
+            return Theme.teal  // Green — user is speaking
+        }
+        return Theme.purple  // Orange — intelligence working
+    }
+
+    private var toastGlowState: GlowState {
+        if appState.transcribeStatus == .listening {
+            return .thinking  // Pulsing green while mic is on
+        }
+        if appState.transcribeService.isGeneratingPrompt || appState.transcribeService.isEnhancing {
+            return .thinking  // Pulsing orange while AI is working
+        }
+        return .off
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,9 +51,9 @@ struct UnifiedToastView: View {
         .frame(width: 340)
         .modifier(LiquidGlassBackground(fallbackColor: theme.card))
         .intelligenceGlow(
-            color: Theme.purple,
+            color: toastGlowColor,
             cornerRadius: 16,
-            state: appState.transcribeService.isGeneratingPrompt ? .thinking : .off
+            state: toastGlowState
         )
         .shadow(color: .black.opacity(colorScheme == .dark ? 0.4 : 0.08), radius: 24, y: 8)
     }
@@ -257,101 +276,33 @@ struct UnifiedToastView: View {
 
             switch appState.transcribeStatus {
             case .idle:
-                VStack(spacing: 10) {
-                    // Pre-prompt suggestions (appear when ready, don't block anything)
-                    if !appState.transcribeService.suggestedPrompts.isEmpty {
-                        VStack(spacing: 6) {
-                            ForEach(Array(appState.transcribeService.suggestedPrompts.enumerated()), id: \.offset) { idx, suggestion in
-                                HStack(spacing: 8) {
-                                    Image(systemName: "sparkle")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(Theme.purple)
-                                        .padding(.top, 2)
-                                    Text(suggestion)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(theme.textPrimary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                        .lineLimit(nil)
-                                        .multilineTextAlignment(.leading)
-                                    Spacer()
-                                    Button(action: { addToBoard(suggestion) }) {
-                                        Text("Add")
-                                            .font(.system(size: 10, weight: .semibold))
-                                            .foregroundStyle(Theme.teal)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(Theme.teal.opacity(0.15))
-                                            .clipShape(Capsule())
-                                    }
-                                    .buttonStyle(.plain)
-                                    Button(action: { appState.transcribeService.injectPrePrompt(at: idx) }) {
-                                        Text("Use")
-                                            .font(.system(size: 10, weight: .semibold))
-                                            .foregroundStyle(Theme.purple)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(Theme.purple.opacity(0.15))
-                                            .clipShape(Capsule())
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                                .padding(10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Theme.purple.opacity(colorScheme == .dark ? 0.08 : 0.05))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                            }
-                        }
-                    }
-
-                    // Start button — always visible, with subtle loading hint if pre-prompt is generating
-                    actionButton(
-                        title: appState.transcribeService.isGeneratingPrompt ? "Start Transcribing" : "Start Transcribing",
-                        icon: "mic.fill",
-                        color: Theme.teal
-                    ) {
-                        appState.toggleTranscribe()
-                    }
-                    // Border glow on the toast itself signals loading — no spinner needed
+                // Pre-prompt suggestions — tap to inject at cursor, right-click to add to board
+                if !appState.transcribeService.suggestedPrompts.isEmpty {
+                    suggestedPromptsView(muted: false)
                 }
+
+                Text("Press Fn to start transcribing")
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.textMuted)
+                    .frame(maxWidth: .infinity, alignment: .center)
 
             case .listening:
                 // Waveform — no live transcript, just recording indicator
                 HStack(spacing: 8) {
                     waveformBars
-                    Text("Listening...")
+                    Text("Listening… press Fn to stop")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.teal)
                 }
 
-                // Pre-prompt suggestions while listening
+                // Suggestions visible but muted while listening
                 if !appState.transcribeService.suggestedPrompts.isEmpty {
-                    VStack(spacing: 4) {
-                        ForEach(Array(appState.transcribeService.suggestedPrompts.enumerated()), id: \.offset) { _, suggestion in
-                            HStack(alignment: .top, spacing: 6) {
-                                Image(systemName: "sparkle")
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(Theme.purple.opacity(0.6))
-                                    .padding(.top, 2)
-                                Text(suggestion)
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(theme.textSecondary)
-                                    .lineLimit(2)
-                            }
-                        }
-                    }
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.purple.opacity(colorScheme == .dark ? 0.05 : 0.03))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    suggestedPromptsView(muted: true)
                 } else {
                     Text("Speak naturally. Text will appear when you stop.")
                         .font(.system(size: 11))
                         .foregroundStyle(theme.textMuted)
                         .multilineTextAlignment(.center)
-                }
-
-                actionButton(title: "Done Speaking", icon: "stop.fill", color: Theme.teal) {
-                    appState.transcribeService.stop()
                 }
 
             case .transcribing:
@@ -364,26 +315,21 @@ struct UnifiedToastView: View {
                 executingIndicator(label: "Typing at cursor...", color: Theme.teal)
 
             case .done:
-                // What was injected
-                HStack(alignment: .top, spacing: 0) {
-                    resultCard(
-                        text: appState.transcribeCleanText.isEmpty ? "Done" : appState.transcribeCleanText,
-                        color: Theme.green,
-                        icon: "checkmark.circle.fill"
-                    )
+                // What was injected — tap to copy, right-click to add to board
+                resultCard(
+                    text: appState.transcribeCleanText.isEmpty ? "Done" : appState.transcribeCleanText,
+                    color: copiedText == appState.transcribeCleanText ? Theme.teal : Theme.green,
+                    icon: copiedText == appState.transcribeCleanText ? "doc.on.doc.fill" : "checkmark.circle.fill"
+                )
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard !appState.transcribeCleanText.isEmpty else { return }
+                    copyToClipboard(appState.transcribeCleanText)
+                }
+                .contextMenu {
                     if !appState.transcribeCleanText.isEmpty {
-                        Button(action: { addToBoard(appState.transcribeCleanText) }) {
-                            Image(systemName: addedToBoard == appState.transcribeCleanText ? "checkmark" : "plus")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(Theme.teal)
-                                .frame(width: 24, height: 24)
-                                .background(Theme.teal.opacity(0.12))
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Add to board")
-                        .padding(.top, 8)
-                        .padding(.trailing, 4)
+                        Button("Add to Board") { addToBoard(appState.transcribeCleanText) }
+                        Button("Copy") { copyToClipboard(appState.transcribeCleanText) }
                     }
                 }
 
@@ -398,58 +344,49 @@ struct UnifiedToastView: View {
                             .foregroundStyle(Theme.purple)
                     }
                 } else if !appState.transcribeService.enhancedText.isEmpty {
-                    HStack(alignment: .top, spacing: 0) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 5) {
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(Theme.purple)
-                                Text("Enhanced version")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(Theme.purple)
-                            }
-
-                            Text(appState.transcribeService.enhancedText)
-                                .font(.system(size: 12))
-                                .foregroundStyle(theme.textPrimary)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .lineLimit(8)
-                        }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Theme.purple.opacity(colorScheme == .dark ? 0.1 : 0.06))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-
-                        Button(action: { addToBoard(appState.transcribeService.enhancedText) }) {
-                            Image(systemName: addedToBoard == appState.transcribeService.enhancedText ? "checkmark" : "plus")
+                    // Enhanced version — tap to inject at cursor, right-click for options
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 5) {
+                            Image(systemName: copiedText == appState.transcribeService.enhancedText ? "doc.on.doc.fill" : "sparkles")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Theme.purple)
+                            Text(copiedText == appState.transcribeService.enhancedText ? "Copied!" : "Enhanced — tap to use")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(Theme.purple)
-                                .frame(width: 24, height: 24)
-                                .background(Theme.purple.opacity(0.12))
-                                .clipShape(Circle())
                         }
-                        .buttonStyle(.plain)
-                        .help("Add to board")
-                        .padding(.top, 12)
-                    }
 
-                    actionButton(title: "Use Enhanced", icon: "sparkles", color: Theme.purple) {
-                        Task {
-                            await appState.transcribeService.injectEnhanced()
-                        }
+                        Text(appState.transcribeService.enhancedText)
+                            .font(.system(size: 12))
+                            .foregroundStyle(theme.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(nil)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.purple.opacity(colorScheme == .dark ? 0.1 : 0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        Task { await appState.transcribeService.injectEnhanced() }
+                    }
+                    .contextMenu {
+                        Button("Add to Board") { addToBoard(appState.transcribeService.enhancedText) }
+                        Button("Copy") { copyToClipboard(appState.transcribeService.enhancedText) }
                     }
                 }
 
-                actionButton(title: "Transcribe Again", icon: "mic.fill", color: Theme.teal) {
-                    appState.toggleTranscribe()
+                // Suggestions after done — tap to inject
+                if !appState.transcribeService.suggestedPrompts.isEmpty {
+                    suggestedPromptsView(muted: false)
                 }
 
             case .error(let message):
                 resultCard(text: message, color: Theme.red, icon: "exclamationmark.triangle.fill")
 
-                actionButton(title: "Try Again", icon: "arrow.counterclockwise", color: Theme.teal) {
-                    appState.toggleTranscribe()
-                }
+                Text("Press Fn to try again")
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.textMuted)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .padding(22)
@@ -730,6 +667,38 @@ struct UnifiedToastView: View {
         onDirectExecute()
     }
 
+    // MARK: - Suggested Prompts
+
+    @ViewBuilder
+    private func suggestedPromptsView(muted: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(appState.transcribeService.suggestedPrompts.enumerated()), id: \.offset) { idx, prompt in
+                HStack(spacing: 8) {
+                    Image(systemName: copiedText == prompt ? "doc.on.doc.fill" : "arrow.right.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.purple)
+                    Text(prompt)
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textPrimary)
+                        .lineLimit(3)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.purple.opacity(colorScheme == .dark ? 0.08 : 0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    appState.transcribeService.injectPrePrompt(at: idx)
+                }
+                .contextMenu {
+                    Button("Add to Board") { addToBoard(prompt) }
+                    Button("Copy") { copyToClipboard(prompt) }
+                }
+            }
+        }
+        .opacity(muted ? 0.4 : 1.0)
+    }
+
     // MARK: - Board
 
     private func addToBoard(_ item: String) {
@@ -753,6 +722,15 @@ struct UnifiedToastView: View {
         withAnimation(.easeOut(duration: 0.2)) { addedToBoard = item }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             withAnimation { addedToBoard = nil }
+        }
+    }
+
+    private func copyToClipboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        withAnimation(.easeOut(duration: 0.2)) { copiedText = text }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation { copiedText = nil }
         }
     }
 }

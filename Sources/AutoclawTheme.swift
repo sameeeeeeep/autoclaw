@@ -46,10 +46,10 @@ struct Theme {
     static let green = Color(hex: 0x16A34A)
     static let red = Color(hex: 0xDC2626)
     static let amber = Color(hex: 0xF59E0B)
-    static let purple = Color(hex: 0x7C3AED)
+    static let purple = Color(hex: 0xF97316)
     static let pink = Color(hex: 0xDB2777)
     static let indigo = Color(hex: 0x4F46E5)
-    static let teal = Color(hex: 0x0D9488)
+    static let teal = Color(hex: 0x22C55E)
 
     // MARK: - Button
 
@@ -145,7 +145,7 @@ extension Theme {
             return AppIconStyle(background: Color(hex: 0xE0E7FF), foreground: Color(hex: 0x4F46E5), systemImage: "video.fill")
         }
         if name.contains("figma") || name.contains("sketch") || name.contains("design") {
-            return AppIconStyle(background: Color(hex: 0xF3E8FF), foreground: Color(hex: 0x7C3AED), systemImage: "paintbrush.fill")
+            return AppIconStyle(background: Color(hex: 0xFFF3E0), foreground: Color(hex: 0xF97316), systemImage: "paintbrush.fill")
         }
         if name.contains("clickup") || name.contains("jira") || name.contains("linear") || name.contains("task") {
             return AppIconStyle(background: Color(hex: 0xFEF3C7), foreground: Color(hex: 0xD97706), systemImage: "checkmark.square.fill")

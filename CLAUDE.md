@@ -1,12 +1,12 @@
 # Autoclaw — CLAUDE.md
 
-## Current Focus (2026-03-31)
+## Current Focus (2026-04-01)
 - **Product positioning**: Autoclaw is the agentic interface layer for macOS. When agentic intelligence lives only within apps, the cognitive load falls on the user. Autoclaw absorbs that load at the OS level. Phase 1: voice-first Claude Code interface. Phase 2: workflow learning. Phase 3: ambient detection.
-- **Agentic enhance**: 3-branch routing — code apps get agentic prompt engineering (speech → effective prompt), non-code apps get tone-aware rewrite (no project context leaking into emails). Preserves user references ("these numbers" stays as-is — Claude has conversation context). Web app resolution: "Google Chrome" → "Gmail"/"Notion"/"Claude" via effectiveAppName.
-- **PM Agent**: Haiku as product manager — 6 PM thinking lenses, casual plain-English recommendations (one sentence, no jargon), sandboxed to `.autoclaw/` folder, maintains kanban board. Refresh prompt reminds formatting every round.
-- **Project/session switching**: Fully rewires file paths, JSONL watcher, and session context provider on switch. No more cross-project contamination.
-- **Theater dynamics**: Camera system (5 shot types, lerp transitions), 24 scene locations (3 per theme), ambient lighting toward speaker.
-- **Next**: Fix Qwen confidence bug (Analyze mode broken), fix enhanced text field race, CLI timeouts, then polish + ship.
+- **Agentic enhance**: Now has tools (Read, Glob, Grep) — reads actual codebase files before rewriting. Runs from project directory. Writes prompts with real file names, real function names, real solutions. Thinks like a code reviewer: "if someone implemented exactly what you said, what would go wrong?" then bakes the fix INTO the prompt. Non-code apps (email/Slack/Notion) get lightweight tone-aware rewrite.
+- **Commentary booth theater**: Characters react to coding like sports commentators — not explaining tech, roasting/celebrating decisions. Two-round dialog: Round 1 reacts to user's ask, Round 2 reacts to Claude's response. Mutes during mic recording, manual mute/unmute toggle on PIP header.
+- **Simplified transcribe UI**: No buttons — tap to inject/copy, right-click for "Add to Board"/"Copy". Suggested prompts auto-inject on click. Fn key hints replace action buttons.
+- **Color scheme**: Orange/green (matching ghost icon). Toast glow: green when user is speaking, orange when intelligence is working.
+- **Next**: Test text injection across apps (postToPid approach), fix Qwen confidence bug (Analyze mode broken), CLI timeouts, then polish + ship.
 
 ## What this is
 Native macOS app (Swift/SwiftUI) — the agentic interface layer for macOS. Not a copilot, not a chatbot. Absorbs the cognitive load between you and AI tools.
@@ -23,7 +23,7 @@ Mic → WhisperKit (local) → inject raw at cursor → Smart Enhance (Haiku/Son
 ```
 Persistent Haiku session per project: first call primes with CLAUDE.md + session context, follow-ups resume. Pre-prompt fires when toast opens — 2 predictions as tappable "Use" cards. Auto-refreshes as session progresses. Raw text injected immediately on stop. Enhanced version offered in background. Pre-prompt and enhance share the same Haiku session thread.
 
-**Status: FULLY BUILT** — WhisperKit STT (base.en, Neural Engine) → raw inject → smart enhance (Haiku/Sonnet/none). Persistent Haiku pre-prompt with JSON format (predictions + multi-turn ELI5 dialog), event-driven JSONL file watcher refresh, feed-back loop. Theater PIP with animated sprite stage + TTS voice playback via owned Python sidecar. 8 dialog themes (TV character pairs) with third-character user framing. Liquid glass UI on macOS 26. Apple SFSpeech as fallback STT.
+**Status: FULLY BUILT** — WhisperKit STT (base.en, Neural Engine) → raw inject → agentic enhance (reads codebase via tools, writes solution-complete prompts). Persistent Haiku pre-prompt with JSON format (predictions + commentary booth dialog), event-driven JSONL file watcher refresh, feed-back loop, two-round reaction dialog. Theater PIP with animated sprite stage + TTS voice playback via owned Python sidecar. 8 dialog themes (TV character pairs) with commentary booth framing. Simplified toast UI — tap to inject, right-click for options, no buttons. Toast glow: green=speaking, orange=thinking. Liquid glass UI on macOS 26. Apple SFSpeech as fallback STT.
 
 ### 2. Analyze (ambient detection)
 ```
@@ -190,6 +190,14 @@ Pencil files with Cofia-inspired UI: workflow dashboard, friction toast, card st
 - Gate 2: "Execute these exact tools" (run) — with intent lock diff
 
 ## Key Decisions
+- Agentic enhance with read-only tools: enhance CLI runs from project directory with Read,Glob,Grep — reads actual code before writing the enhanced prompt. No Write access. Prompts reference real file names, function names, patterns. Non-code apps get lightweight rewrite without tools (2026-04-01)
+- Commentary booth theater framing: characters REACT to coding like sports commentators, not ELI5 explainers. Two-round dialog — Round 1 reacts to user's ask, Round 2 reacts to Claude's response (2026-04-01)
+- Toast glow color semantics: green pulse = user speaking (mic on), orange pulse = intelligence working (generating/enhancing), off = idle (2026-04-01)
+- Theater mute toggle on PIP header: manual mute/unmute button. Auto-mutes during mic recording, auto-unmutes on stop (both Fn key and toggleTranscribe paths) (2026-04-01)
+- Simplified transcribe UI: no action buttons. Tap = inject/copy, right-click = context menu (Add to Board, Copy). Fn key hints replace buttons (2026-04-01)
+- Orange/green color scheme: Theme.purple → orange (0xF97316), Theme.teal → green (0x22C55E), matching autoclaw ghost icon (2026-04-01)
+- WhisperKit chunk retry on failure: lastChunkEnd only advances on successful transcription — failed chunks stay in buffer and get retried with next chunk instead of being silently dropped (2026-04-01)
+- CursorInjector postToPid: Cmd+V sent directly to target app's PID instead of global event tap. Target app captured at transcribe start, re-activated before paste, verified frontmost (2026-04-01)
 - PM agent with sandboxed file access: Haiku reads session JSONL + CLAUDE.md/README via --allowedTools, maintains .autoclaw/board.md kanban. No direct codebase access — only .autoclaw/ folder (2026-03-30)
 - Board PIP as separate floating widget: NSPanel positioned bottom-left (opposite Theater at bottom-right). Tapping any item injects at cursor + copies to clipboard (2026-03-30)
 - Non-repeatable fillers/cold opens: after playing, permanently removed from in-memory dict AND deleted from JSON file. Once played, gone forever (2026-03-30)

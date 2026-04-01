@@ -15,6 +15,9 @@ public final class DialogVoiceService: ObservableObject {
     @Published public var currentLineIndex: Int = -1
     /// True when playing filler content between real dialogs
     @Published public var isPlayingFiller = false
+    /// Muted — suppresses audio playback but keeps theater visible.
+    /// Set true when mic is recording to prevent TTS bleeding into transcription.
+    @Published public var isMuted = false
 
     public init() {}
 
@@ -388,7 +391,15 @@ public final class DialogVoiceService: ObservableObject {
     // MARK: - Playback
 
     /// Play WAV data and wait for it to finish (async bridge over AVAudioPlayer delegate).
+    /// When muted, skips audio but waits a proportional duration so visual sync stays intact.
     private func playAndWait(data: Data) async {
+        if isMuted {
+            // Estimate duration from WAV data size (16-bit mono 22050Hz ≈ 44100 bytes/sec)
+            let estimatedSeconds = max(0.5, Double(data.count) / 44100.0)
+            try? await Task.sleep(nanoseconds: UInt64(estimatedSeconds * 1_000_000_000))
+            return
+        }
+
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             do {
                 let audioPlayer = try AVAudioPlayer(data: data)

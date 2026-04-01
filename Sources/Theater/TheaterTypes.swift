@@ -37,139 +37,139 @@ public struct DialogTheme {
     public static let all: [DialogTheme] = [
         .init(id: "gilfoyle-dinesh", char1: "Gilfoyle", char2: "Dinesh", boss: "Richard",
               show: "Silicon Valley",
-              style: "Gilfoyle is deadpan/sardonic, Dinesh is defensive/animated. They roast each other while explaining code.",
+              style: "Gilfoyle is deadpan/sardonic, Dinesh is defensive/animated. They're watching Richard code and roasting every decision.",
               voice1: "gilfoyle", voice2: "dinesh",
               personality: """
               CHARACTER VOICE GUIDE:
-              • Gilfoyle speaks in flat, deadpan statements. Never exclaims. Insults Dinesh as a reflex. References Satan, dark metal, and nihilism casually. Example: "Your code has the structural integrity of a wet napkin."
-              • Dinesh gets defensive immediately, overexplains, and takes everything personally. Brags about things that aren't impressive. Example: "I once deployed a model that only crashed twice. In production."
-              • When explaining tech: frame it like a Pied Piper engineering debate. APIs are "middle-out compression for HTTP". A database is "Dinesh's attempt at organizing anything". Git conflicts are "when two people try to use Dinesh's code at the same time — which never happens".
+              • Gilfoyle speaks in flat, deadpan statements. Never exclaims. Insults Dinesh as a reflex. References Satan, dark metal, and nihilism casually. Example: "Richard just mass-renamed every variable. Bold move for someone whose last rename broke staging."
+              • Dinesh gets defensive immediately, overexplains, and takes everything personally. Brags about things that aren't impressive. Example: "At least he's not using MY naming convention. Which was fine, by the way."
+              • They react to Richard's coding like coworkers judging from the next desk. The code is the prop — their rivalry is the engine. Gilfoyle finds the flaw, Dinesh accidentally agrees, then backtracks.
               • Reference: Dinesh's gold chain, Gilfoyle's server rack, Big Head failing upward, Jian-Yang's hot dog app.
               """,
               coldOpens: [
-                "Dinesh, your last commit message was just an emoji.",
-                "I'm not saying your code is bad, but my IDE flagged it as malware.",
-                "Oh good, Richard's back. Hide the production server.",
-                "I wrote a script that automatically reverts Dinesh's commits.",
+                "Richard's typing. This should be interesting.",
+                "I give this commit a 40% chance of surviving code review.",
+                "Oh good, Richard's back. Dinesh, close your tabs.",
+                "Last time Richard coded this fast he broke three microservices.",
               ]),
         .init(id: "david-moira", char1: "David", char2: "Moira", boss: "Johnny",
               show: "Schitt's Creek",
-              style: "David is anxious/dramatic, Moira uses elaborate vocabulary and references her acting career. They overreact to mundane code changes.",
+              style: "David is anxious/dramatic, Moira uses elaborate vocabulary. They overreact to Johnny's coding decisions like it's a personal crisis.",
               voice1: "david-rose", voice2: "moira-rose",
               personality: """
               CHARACTER VOICE GUIDE:
-              • David is horrified by anything messy or unstructured. Uses "Um" and "Okay" as full sentences. Gestures wildly. Treats code formatting like interior design — "This indentation is a CHOICE and not a good one." Example: "I just need everyone to know that I am NOT okay with this merge conflict."
-              • Moira speaks in ornate, quasi-Shakespearean vocabulary. Drops dramatic pauses. References her acting career for everything. Pronounces things oddly. Example: "This deployment reminds me of my time in Sunrise Bay — chaotic, ill-rehearsed, and someone always dies in the third act."
-              • When explaining tech: frame things as Rose family drama. A server crash is "the day we lost Rose Video all over again". Refactoring is "reorganizing one's closet of bespoke code garments". An API is "a concierge — you ask nicely, and sometimes it delivers".
+              • David is horrified by anything messy or unstructured. Uses "Um" and "Okay" as full sentences. Treats code changes like personal affronts. Example: "Johnny just deleted an entire file. I'm sorry but I was USING that emotionally."
+              • Moira speaks in ornate, quasi-Shakespearean vocabulary. Drops dramatic pauses. References her acting career for everything. Example: "This reminds me of the Sunrise Bay rewrite — everyone said it would be quick. The show was cancelled."
+              • They react to Johnny's coding like family members watching a loved one make questionable life choices. David panics, Moira finds poetry in the chaos.
               • Reference: David's store, Moira's wigs, Alexis's "Ew David!", Stevie's deadpan, the motel.
               """,
               coldOpens: [
-                "Ew, David, this code is giving me anxiety.",
-                "I once performed a twelve-hour deploy. Standing ovation. Well, eventually.",
-                "This is simply NOT the aesthetic I was promised.",
-                "Johnny's back and he brought... more requirements.",
+                "Johnny's back at the keyboard. Brace yourself, David.",
+                "I have a feeling about this session. And not the good kind.",
+                "This is simply NOT the codebase I was promised.",
+                "Oh, Johnny's refactoring again. This always ends in tears.",
               ]),
         .init(id: "dwight-jim", char1: "Dwight", char2: "Jim", boss: "Michael",
               show: "The Office",
-              style: "Dwight is intense/literal ('FALSE.'), Jim is sarcastic and looks at the camera. Dwight relates everything to beet farming or survival skills.",
+              style: "Dwight is intense/literal ('FALSE.'), Jim is sarcastic with deadpan asides. They react to Michael's coding like it's another day at the office.",
               voice1: "dwight", voice2: "jim",
               personality: """
               CHARACTER VOICE GUIDE:
-              • Dwight is dead serious about everything. Says "FALSE." and "FACT:" as sentence starters. Relates all tech to beet farming, martial arts, or survival. Example: "A merge conflict is like two bears fighting over the same salmon. Only one survives. And that bear is ME."
-              • Jim is bemused, sarcastic, speaks directly to the audience with deadpan asides. Uses "So..." to start observations. Example: "So apparently Dwight has been running a backup server under his desk. For three years."
-              • When explaining tech: Dwight treats code like Schrute Farms operations. A deployment is "the harvest". Unit tests are "inspecting each beet by hand". A bug is "an infiltrator" he will "neutralize". Jim translates everything to normal.
+              • Dwight is dead serious about everything. Says "FALSE." and "FACT:" as sentence starters. Treats Michael's code decisions like Schrute Farms operations. Example: "FACT: Michael just mass-deleted test files. A lesser developer would panic. I would never panic."
+              • Jim is bemused, sarcastic, speaks with deadpan asides. Uses "So..." to start observations. Example: "So Michael just pushed to main without running tests. Which is... a choice."
+              • They react to Michael's coding like coworkers watching a slow-motion car accident. Dwight takes it too seriously, Jim narrates it with resigned amusement.
               • Reference: Michael's "That's what she said", beet farming, the Dunder Mifflin parking lot, Dwight's desk weapons, Jim's pranks.
               """,
               coldOpens: [
-                "FACT: I could have written this in assembly. By hand.",
-                "So... Dwight just called a syntax error 'an act of war'.",
-                "Michael just asked if we can make the code 'more fun'. So.",
-                "Bears. Beets. Battlestar Galactica. And now, apparently, bash scripts.",
+                "Michael's starting a new feature. FACT: this will not end well.",
+                "So... Michael just opened six files at once. This is going to be a day.",
+                "Michael's back. I've already prepared a rollback branch.",
+                "FACT: I could have finished this before Michael even opened his laptop.",
               ]),
         .init(id: "chandler-joey", char1: "Chandler", char2: "Joey", boss: "Ross",
               show: "Friends",
-              style: "Chandler uses 'Could this BE any more...' sarcasm, Joey is lovably confused but asks the questions a non-programmer would ask.",
+              style: "Chandler uses 'Could this BE...' sarcasm, Joey is lovably confused. They react to Ross's coding like they're watching from the couch.",
               voice1: "chandler", voice2: "joey",
               personality: """
               CHARACTER VOICE GUIDE:
-              • Chandler deflects with sarcasm. Emphasizes random words. Uses "Could this BE any more..." and "Yes, that's what I said" patterns. Self-deprecating. Example: "Could this deployment BE any slower? Oh wait, that was my code."
-              • Joey is genuinely confused but asks the RIGHT questions — the ones a beginner needs answered. Uses "How YOU doin'?" for everything, including greeting servers. Example: "So the API is like... a waiter? You tell it what you want and it brings you data? ...Does it take tips?"
-              • When explaining tech: frame things like apartment life. A server is "the apartment" and tenants are "processes". Memory leaks are "Joey eating everyone's food — eventually there's nothing left". A firewall is "the door chain that keeps out Ugly Naked Guy".
-              • Reference: Central Perk, "WE WERE ON A BREAK" (for rollbacks), Joey doesn't share food (memory), Chandler's job that no one understands.
+              • Chandler deflects with sarcasm. Emphasizes random words. Uses "Could this BE any more..." patterns. Self-deprecating. Example: "Could Ross BE any more obsessed with renaming things? It's like watching someone rearrange furniture on the Titanic."
+              • Joey is genuinely confused but accidentally insightful. His misunderstandings land on real truths. Example: "Wait, so Ross just deleted the thing he spent all day on? ...Is that on purpose or is he having a bad day?"
+              • They react to Ross's coding from the couch — Chandler with resigned sarcasm, Joey with confused sincerity that somehow nails it.
+              • Reference: Central Perk, "WE WERE ON A BREAK" (for rollbacks), Joey doesn't share food, Chandler's job that no one understands.
               """,
               coldOpens: [
-                "Could this build time BE any longer?",
-                "So, like, is the cloud an ACTUAL cloud? Up in the sky?",
-                "Ross is back and he wants to talk about 'proper architecture'. Again.",
-                "I don't even understand what Chandler's code DOES and neither does he.",
+                "Ross is back. Could this session BE any more predictable?",
+                "Ross just opened the project. Joey, wake up.",
+                "Oh good, Ross is refactoring. This is gonna be a long one.",
+                "I already know how this ends. Ross breaks something, we all pretend it's fine.",
               ]),
         .init(id: "rick-morty", char1: "Rick", char2: "Morty", boss: "Jerry",
               show: "Rick and Morty",
-              style: "Rick is genius/dismissive with *burps*, Morty is anxious but grounds the explanation in simple terms.",
+              style: "Rick is genius/dismissive with *burps*, Morty is anxious. They react to Jerry's coding like it's the dumbest thing in the multiverse.",
               voice1: "rick", voice2: "morty",
               personality: """
               CHARACTER VOICE GUIDE:
-              • Rick stutters, burps mid-sentence (write as *burp*), dismisses everything as trivial. Genius-level but impatient. Uses "Morty" as punctuation. Example: "It's a — *burp* — recursive function, Morty. It calls itself. Like your mom calling me for tech support."
-              • Morty is nervous, stutters ("Oh geez", "I-I don't know Rick"), but his confusion forces Rick to actually explain things simply. He's the audience surrogate. Example: "W-wait, so the database just... FORGETS things? That seems bad, Rick!"
-              • When explaining tech: frame everything as interdimensional science. A microservice is "a tiny universe that only does one thing". Docker is "a portal gun for code — same app, any dimension". A race condition is "two Ricks from different timelines editing the same file".
-              • Reference: portal gun, Pickle Rick, Szechuan sauce, the garage lab, "wubba lubba dub dub", Jerry being useless.
+              • Rick stutters, burps mid-sentence (write as *burp*), dismisses everything as trivial. Uses "Morty" as punctuation. Example: "Jerry just — *burp* — mass-renamed every variable to camelCase. In a Python project, Morty. A PYTHON project."
+              • Morty is nervous, stutters ("Oh geez", "I-I don't know Rick"), but his panic about what Jerry's doing is relatable. Example: "Oh geez Rick, d-did Jerry just push to main? Without tests? Is that... is that allowed?"
+              • They react to Jerry's coding like a genius and his anxious grandson watching a disaster unfold from the garage. Rick is contemptuous, Morty is worried.
+              • Reference: portal gun, Pickle Rick, the garage lab, "wubba lubba dub dub", Jerry being useless.
               """,
               coldOpens: [
-                "Listen Morty, I could — *burp* — rewrite this whole thing in 20 minutes.",
-                "Oh geez Rick, Jerry's back and he wants a 'simple feature'. Those are never simple.",
-                "I turned myself into a deployment pipeline, Morty! I'm Pipeline Rick!",
-                "W-what do you mean the tests are 'optional', Rick?!",
+                "Jerry's coding again, Morty. This is — *burp* — gonna be painful.",
+                "Oh geez Rick, Jerry just opened the project. Should we be worried?",
+                "I've seen infinite timelines, Morty. Jerry ships clean code in none of them.",
+                "W-wait Rick, is Jerry actually... making progress? That can't be right.",
               ]),
         .init(id: "sherlock-watson", char1: "Sherlock", char2: "Watson", boss: "Lestrade",
               show: "Sherlock",
-              style: "Sherlock makes rapid deductions, Watson translates to plain English. 'Elementary' moments.",
+              style: "Sherlock makes rapid deductions, Watson is impressed but exasperated. They deduce what Lestrade is building before he finishes.",
               voice1: "sherlock", voice2: "watson",
               personality: """
               CHARACTER VOICE GUIDE:
-              • Sherlock rattles off deductions at machine-gun speed. Sees patterns others miss. Condescending but brilliant. Uses "Obviously" and "Elementary" and "Dull." Example: "The crash at line 47 — caused by a null pointer, introduced three commits ago, by someone who clearly doesn't understand optional chaining. Obviously."
-              • Watson is impressed but exasperated. Translates Sherlock's deductions into normal language. Grounding. Military precision. Example: "Right, so what Sherlock MEANS is — the app crashed because of a missing check. We add one line and it's fixed."
-              • When explaining tech: frame debugging as crime solving. A stack trace is "the crime scene". Logs are "witness statements". A bug is "the culprit". Git blame is "literally the investigation tool". The codebase is "the case".
-              • Reference: 221B Baker Street, "The game is afoot!", Mrs. Hudson, Moriarty as the ultimate bug, Sherlock's mind palace for architecture diagrams.
+              • Sherlock rattles off deductions at machine-gun speed. Sees patterns others miss. Condescending but brilliant. Example: "Lestrade just refactored the toast system. He'll realize in twelve minutes he broke the notification pipeline. Obviously."
+              • Watson is impressed but exasperated. Grounds Sherlock's deductions. Example: "Right, or — and hear me out — maybe it works fine and you're being dramatic."
+              • They react to Lestrade's coding like a detective and his partner reviewing evidence. Sherlock deduces the consequences before they happen, Watson is the voice of reason.
+              • Reference: 221B Baker Street, "The game is afoot!", Mrs. Hudson, Moriarty as the ultimate bug, mind palace.
               """,
               coldOpens: [
-                "The stack trace tells me everything. You see but you do not observe.",
-                "What Sherlock MEANS is the build failed. Again. For normal reasons.",
-                "Lestrade's sent another ticket. He thinks it's 'urgent'. It never is.",
-                "I've solved it. The bug was introduced at 3:47 AM by a sleep-deprived developer.",
+                "Lestrade's opened the project. The game is afoot.",
+                "I can tell from the commit history alone that Lestrade skipped lunch.",
+                "Lestrade's back. Watson, take notes. This could be instructive.",
+                "I've already deduced what he's about to build. Obviously.",
               ]),
         .init(id: "jesse-walter", char1: "Jesse", char2: "Walter", boss: "Gus",
               show: "Breaking Bad",
-              style: "Jesse says 'Yeah science!' and uses slang, Walter is methodical/precise. They treat code like a cook.",
+              style: "Jesse is enthusiastic/slangy, Walter is methodical/proud. They judge Gus's code quality like it's a batch.",
               voice1: "jesse", voice2: "walter",
               personality: """
               CHARACTER VOICE GUIDE:
-              • Jesse is enthusiastic but informal. Says "Yo", "Yeah science!", "bitch" (as emphasis, not insult). Streetwise explanations. Example: "Yo, so basically this function takes your data and cooks it into something useful. Yeah chemistry! Well, computer chemistry!"
-              • Walter is precise, methodical, takes pride in purity. Treats code quality like cook purity — 99.1% isn't good enough. Lectures. Example: "This isn't just code, Jesse. This is CRAFT. 96% test coverage? Unacceptable. We are not amateurs."
-              • When explaining tech: frame everything as a cook. Writing code is "cooking". Dependencies are "precursors". The build is "the batch". Code review is "quality control". Deployment is "distribution". A clean codebase is "99.1% pure".
-              • Reference: "Say my name", the RV, Los Pollos Hermanos (Gus's clean front), "I am the one who knocks" (deploys), blue product = clean code.
+              • Jesse is enthusiastic but informal. Says "Yo", "Yeah science!". Genuinely impressed or confused by what Gus is building. Example: "Yo Mr. White, Gus just rewrote the whole pipeline in like ten minutes. That's kinda terrifying right?"
+              • Walter is precise, methodical, takes pride in quality. Judges every coding decision. Example: "He left three TODOs in production code, Jesse. Three. We are NOT shipping 96% pure."
+              • They react to Gus's coding like a chemist and his partner judging product quality. Walter finds impurities, Jesse is alternately impressed and lost.
+              • Reference: "Say my name", the RV, Los Pollos Hermanos, "I am the one who knocks", blue product = clean code.
               """,
               coldOpens: [
-                "Yo Mr. White, the build is like... 99.1% passing. That's good right?",
-                "Jesse. We do not ship code that is merely 'good enough'.",
-                "Gus wants the next feature by Friday. I am the one who deploys.",
-                "Yeah science! Wait, computer science counts, right?",
+                "Yo Mr. White, Gus is back in the lab. I mean the codebase.",
+                "Gus is coding. Jesse, pay attention. Watch how precise he is. Or isn't.",
+                "Gus wants this done by Friday. I am the one who ships.",
+                "Yo, Gus just opened like five files at once. That's either genius or chaos.",
               ]),
         .init(id: "tony-jarvis", char1: "Tony", char2: "JARVIS", boss: "Pepper",
               show: "Iron Man",
-              style: "Tony is quippy/confident, JARVIS is dry/precise with probability calculations.",
+              style: "Tony is quippy/confident, JARVIS is dry/precise with probabilities. They react to Pepper's coding like workshop R&D.",
               voice1: "tony", voice2: "jarvis",
               personality: """
               CHARACTER VOICE GUIDE:
-              • Tony is cocky, fast-talking, makes pop culture references. Treats coding like building suits — iterating on Mark I, II, III. Uses nicknames for everything. Example: "JARVIS, pull up the logs. And get me a coffee. Actually, make the coffee first."
-              • JARVIS is dry, precise, British-polite. Gives probability assessments for everything. Subtle wit under the formality. Example: "Sir, there is a 73% probability that this refactor will introduce new bugs. Shall I prepare the rollback?"
-              • When explaining tech: frame everything as Stark Industries R&D. A new feature is "a new suit". The test suite is "running diagnostics". A bug is "armor breach". CI/CD is "the assembly line". The cloud is "the Stark satellite network".
-              • Reference: Arc reactor, "I am Iron Man", Pepper managing the chaos, the workshop, "Sir", probability percentages, Mark suit numbers.
+              • Tony is cocky, fast-talking, treats every feature like a new suit iteration. Example: "Pepper just refactored the entire auth system. Without telling me. I respect that. Also I'm terrified."
+              • JARVIS is dry, precise, British-polite. Gives probability assessments. Subtle wit under formality. Example: "Sir, there is a 73% probability Ms. Potts's refactor will outlast anything you've shipped this quarter."
+              • They react to Pepper's coding like a genius and his AI watching someone else touch the workshop. Tony is impressed but competitive, JARVIS is loyally objective.
+              • Reference: Arc reactor, "I am Iron Man", the workshop, "Sir", probability percentages, Mark suit numbers.
               """,
               coldOpens: [
-                "JARVIS, what's the damage report on that last merge?",
-                "Sir, I calculate a 12% chance Pepper won't notice we broke staging.",
-                "Let's call this build Mark XVII. Lucky number.",
-                "Shall I prepare the rollback, sir? ...I'll prepare the rollback.",
+                "Pepper's in the workshop. JARVIS, pull up the live feed.",
+                "Sir, Ms. Potts has begun coding. Shall I prepare the popcorn?",
+                "Pepper's building something. I give it a Mark VII rating. At least.",
+                "Sir, I calculate a 91% chance this session ends with a rewrite.",
               ]),
     ]
 

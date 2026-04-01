@@ -253,13 +253,19 @@ final class AppState: ObservableObject {
     func toggleTranscribe() {
         if isTranscribing {
             transcribeService.stop()
+            transcribeService.dialogVoice.isMuted = false  // Unmute theater when mic stops
             isTranscribing = false
             statusLine = "Transcribe stopped"
         } else {
             isTranscribing = true
             requestMode = .transcribe
             showThread = true
+            transcribeService.dialogVoice.isMuted = true   // Mute theater while mic is on
             transcribeService.activeApp = activeApp
+            // Capture the target app for cursor injection — the app user was in before toast
+            CursorInjector.targetApp = NSWorkspace.shared.runningApplications.first {
+                $0.isActive && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+            }
             // Auto-detect project from active window if none selected
             autoDetectProjectIfNeeded()
             transcribeService.projectContext = selectedProject?.claudeMDSummary ?? ""

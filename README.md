@@ -65,10 +65,10 @@ Your Claude Code session (JSONL)
        │     │     └── Agentic Enhance (background) → turns casual speech
        │     │         into effective prompts. Accept or keep raw.
        │     │
-       │     └── + button saves transcript to kanban board
+       │     └── right-click any card → "Add to Board" / "Copy"
        │
        └── Theater PIP (optional)
-             TV characters narrate your session ELI5-style
+             TV characters react to your session like a commentary booth
 ```
 
 ### PM agent
@@ -89,10 +89,12 @@ Predictions refresh automatically via JSONL file watcher. The PM also maintains 
 
 ### Agentic enhance
 
-Enhancement isn't grammar cleanup. It's an invisible prompt engineering layer:
+Enhancement isn't grammar cleanup. It's an invisible engineering layer that **reads your actual code** before rewriting your prompt.
 
-- **In Claude Code / terminals:** Translates casual speech into effective prompts. "fix that thing with the toast" becomes a structured instruction with the right file and function names — but preserves your references when Claude already has context ("update these numbers" stays as-is because Claude knows what "these" means).
-- **In Gmail / Slack / Notion:** Clean tone-aware rewrite. No project context leaking into your emails.
+The enhance model has `Read`, `Glob`, `Grep` tools and runs from your project directory. Before writing the enhanced prompt, it finds the files you're probably talking about, reads the relevant code, then writes a prompt that references real file names, real function names, real patterns — and bakes in the things you didn't think of.
+
+- **In Claude Code / terminals:** "fix that thing with the toast" becomes a prompt that references the actual view file, the actual dismiss function, describes what the fix looks like, and covers the states you forgot to mention — so Claude builds it right the first time with no follow-up round.
+- **In Gmail / Slack / Notion:** Lightweight tone-aware rewrite. Strengthens weak language, removes ambiguity, tightens. No project context leaking into your emails.
 - **Context-aware routing:** Autoclaw resolves web apps — "Google Chrome" becomes "Gmail", "Notion", "Claude" — so the right enhance path fires automatically.
 
 ### Works everywhere
@@ -128,10 +130,12 @@ Autoclaw recognizes tasks ambiently and offers to handle them. You approve or ig
   <em>[ screenshot: Theater PIP — Gilfoyle & Dinesh roasting your code decisions ]</em>
 </p>
 
-Floating PIP with an animated stage. 24 themed scene locations, chibi character sprites with idle/talking/gesturing animations, camera system with 5 shot types, dialogue bubbles. TV characters watch your Claude Code session and explain what's happening — completely in character.
+Floating PIP with an animated stage. 24 themed scene locations, chibi character sprites with idle/talking/gesturing animations, camera system with 5 shot types, dialogue bubbles. TV characters watch your Claude Code session and react like a commentary booth — celebrating wins, roasting questionable decisions, completely in character.
 
-> **Gilfoyle:** A DispatchSource. It's basically a file stalker.
-> **Dinesh:** So it watches files? Like my ex watches my Instagram?
+Two-round dialog: Round 1 reacts to what you asked, Round 2 reacts to what Claude actually built. Mutes during mic recording (manual toggle on PIP header).
+
+> **Gilfoyle:** He just mass-deleted all the buttons and replaced them with tap gestures. Bold.
+> **Dinesh:** Bold? That's what people say right before something breaks in production.
 
 8 character duos across 8 shows. Dialog adapts to your coding pace. Cold opens play instantly. Fillers bridge quiet moments. Voice playback via owned TTS sidecar. Non-repeatable — every performance plays exactly once.
 
@@ -171,9 +175,9 @@ First install downloads ~500MB of model weights (once). Voices are cached to `.a
 
 A floating kanban widget that tracks your project. The PM agent maintains it — moving completed work to Done, surfacing new todos based on what's happening in your session.
 
-- **Add** a prediction to the board for later
+- **Tap** a prediction card to inject it at your cursor
+- **Right-click** any card for "Add to Board" or "Copy"
 - **Tap** any board item to inject it at your cursor + clipboard
-- **+** on any transcript to save it as a todo
 
 Toggle from the toast header. Lives at bottom-left, Theater at bottom-right.
 

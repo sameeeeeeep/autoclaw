@@ -139,6 +139,20 @@ public struct TheaterPIPView<Source: TheaterDataSource>: View {
                 }
             }
 
+            // Mute/Unmute toggle
+            Button {
+                dataSource.dialogVoice.isMuted.toggle()
+            } label: {
+                Image(systemName: dataSource.dialogVoice.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(dataSource.dialogVoice.isMuted ? TheaterColors.purple : theme.textMuted)
+                    .frame(width: 16, height: 16)
+                    .background((dataSource.dialogVoice.isMuted ? TheaterColors.purple : theme.textMuted).opacity(0.1))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help(dataSource.dialogVoice.isMuted ? "Unmute theater" : "Mute theater")
+
             // Close
             Button(action: onDismiss) {
                 Image(systemName: "xmark")

@@ -64,7 +64,7 @@ struct ThreadToastView: View {
     }
 
     private var glowColor: Color {
-        if appState.isExecuting || appState.isDeducing { return .purple }
+        if appState.isExecuting || appState.isDeducing { return .orange }
         if appState.sessionActive && appState.sessionPaused { return .white }
         if appState.sessionActive {
             // Check if last message was successful execution
@@ -167,7 +167,7 @@ struct ThreadToastView: View {
 
     private var sessionStateColor: Color {
         if isSessionEnded { return .secondary }
-        if appState.isExecuting || appState.isDeducing { return .purple }
+        if appState.isExecuting || appState.isDeducing { return .orange }
         if appState.sessionPaused { return .white.opacity(0.6) }
         if case .execution = appState.threadMessages.last { return .cyan }
         return .green
@@ -492,12 +492,12 @@ struct ThreadToastView: View {
                 .lineLimit(1)
             Text("· \(ThreadMessage.formatSize(size))")
                 .font(.system(size: 8))
-                .foregroundStyle(.purple.opacity(0.7))
+                .foregroundStyle(.orange.opacity(0.7))
         }
-        .foregroundStyle(.purple)
+        .foregroundStyle(.orange)
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
-        .background(Color.purple.opacity(0.10))
+        .background(Color.orange.opacity(0.10))
         .clipShape(Capsule())
     }
 
@@ -540,7 +540,7 @@ struct ThreadToastView: View {
     private func clarificationCard(_ clarification: Clarification) -> some View {
         Label("Needs info", systemImage: "questionmark.circle.fill")
             .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(.purple)
+            .foregroundStyle(.orange)
 
         Text(clarification.question)
             .font(.system(size: 11, weight: .medium))

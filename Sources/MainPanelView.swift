@@ -808,9 +808,9 @@ struct SessionThreadView: View {
                 Text("· \(ThreadMessage.formatSize(size))")
                     .font(.system(size: 9)).foregroundStyle(.secondary)
             }
-            .foregroundStyle(.purple)
+            .foregroundStyle(.orange)
             .padding(.horizontal, 6).padding(.vertical, 3)
-            .background(Color.purple.opacity(0.08))
+            .background(Color.orange.opacity(0.08))
             .clipShape(Capsule())
 
         case .learnEvent(_, let event, _):
@@ -930,12 +930,12 @@ struct SessionThreadView: View {
         let lower = app.lowercased()
         if lower.contains("gmail") || lower.contains("mail") { return ("envelope.fill", .red) }
         if lower.contains("notion") { return ("doc.text.fill", .primary) }
-        if lower.contains("slack") { return ("number", .purple) }
+        if lower.contains("slack") { return ("number", .orange) }
         if lower.contains("sheet") || lower.contains("excel") { return ("tablecells.fill", .green) }
         if lower.contains("chrome") || lower.contains("safari") || lower.contains("arc") { return ("globe", .blue) }
         if lower.contains("clickup") || lower.contains("jira") || lower.contains("linear") { return ("checkmark.circle.fill", .blue) }
         if lower.contains("github") { return ("chevron.left.forwardslash.chevron.right", .primary) }
-        if lower.contains("figma") { return ("paintbrush.fill", .purple) }
+        if lower.contains("figma") { return ("paintbrush.fill", .orange) }
         if lower.contains("calendar") { return ("calendar", .red) }
         if lower.contains("finder") || lower.contains("file") { return ("folder.fill", .blue) }
         if lower.contains("note") { return ("note.text", .yellow) }
@@ -1013,7 +1013,7 @@ struct SessionThreadView: View {
         case .execute:      ("Execute", .blue)
         case .draft:        ("Draft", .green)
         case .answer:       ("Answer", .cyan)
-        case .clarification: ("Question", .purple)
+        case .clarification: ("Question", .orange)
         }
         return Text(label)
             .font(.system(size: 9, weight: .bold, design: .monospaced))

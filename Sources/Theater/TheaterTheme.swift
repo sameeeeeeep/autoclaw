@@ -25,8 +25,8 @@ public struct TheaterColors {
     }
 
     // Accent colors
-    public static let teal = Color(red: 0.051, green: 0.58, blue: 0.533)
-    public static let purple = Color(red: 0.486, green: 0.227, blue: 0.929)
+    public static let teal = Color(red: 0.133, green: 0.773, blue: 0.369)
+    public static let purple = Color(red: 0.976, green: 0.451, blue: 0.086)
 }
 
 // MARK: - Intelligence Glow

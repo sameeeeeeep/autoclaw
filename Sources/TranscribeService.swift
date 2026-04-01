@@ -71,9 +71,21 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
     private var lastSessionContextHash: Int = 0
     /// Running list of completed items this session — carried forward into refresh prompts
     private var completedItems: [String] = []
+    /// Task for the second "reaction" dialog — characters react to Claude's response
+    private var reactionTask: Task<Void, Never>?
 
     /// How often to transcribe a chunk (seconds)
     private let chunkInterval: Float = 25.0
+
+    /// Filter out blank/noise chunks from WhisperKit. Silence often produces
+    /// empty strings, lone punctuation, or very short artifacts.
+    private static func isUsableChunk(_ text: String) -> Bool {
+        let stripped = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: .punctuationCharacters)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Must have at least 2 real characters after stripping punctuation
+        return stripped.count >= 2
+    }
 
     /// Extract the sections of CLAUDE.md that help predict next actions.
     /// Prioritizes: gaps/next > build priority > current focus (truncated).
@@ -250,13 +262,14 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
                 }
             }
 
-            // 4. Add remaining audio
-            if !remainingTrimmed.isEmpty {
+            // 4. Add remaining audio (skip if just noise/punctuation)
+            if !remainingTrimmed.isEmpty && Self.isUsableChunk(remainingTrimmed) {
                 rawChunks.append(remainingTrimmed)
             }
 
-            // 5. Combine all raw chunks → inject immediately (no cleanup delay)
-            let fullRaw = rawChunks
+            // 5. Filter out blank/noise chunks, combine → inject immediately
+            let usableChunks = rawChunks.filter { Self.isUsableChunk($0) }
+            let fullRaw = usableChunks
                 .joined(separator: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -299,17 +312,27 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
             let prevPredictions = suggestedPrompts.prefix(3).map { "- \($0)" }.joined(separator: "\n")
             let prevContext = prevPredictions.isEmpty ? "" : "\nYour previous recommendations were:\n\(prevPredictions)\n"
 
+            let feedDialogHint: String
+            if AppSettings.shared.theaterMode {
+                let turns = estimateTempo().dialogTurns
+                feedDialogHint = "\nDialog: \(dialogTheme.char1) and \(dialogTheme.char2) react to what \(dialogTheme.boss) just said/did — commentary booth style, \(turns) lines, in character, each line builds on the previous."
+            } else {
+                feedDialogHint = ""
+            }
+
             let followUp = """
             User just dictated into \(activeApp): "\(String(text.prefix(500)))"
             \(prevContext)
             Think PM: Did the user follow your previous recommendations? If yes, recommend the NEXT thing that matters. If no, were your recommendations off-base? Adjust.
-            What are the 2 highest-impact things the user should tell Claude to build/fix next?
+            What are the 2 highest-impact things the user should tell Claude to build/fix next?\(feedDialogHint)
             Reply with ONLY the JSON object (predictions + dialog), nothing else.
             """
 
             do {
                 let result = try await callClaudeCLI(prompt: followUp, model: "haiku", sessionId: sessionId, resume: true)
                 parsePrePromptResult(result)
+                // Schedule reaction round — characters react to Claude's response
+                scheduleReactionDialog()
             } catch {
                 DebugLog.log("[PrePrompt] Feed-back failed: \(error)")
             }
@@ -333,7 +356,7 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
 
                 for chunk in chunks {
                     let trimmed = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { continue }
+                    guard Self.isUsableChunk(trimmed) else { continue }
                     rawChunks.append(trimmed)
                     print("[Transcribe] Background chunk \(rawChunks.count): \(trimmed.prefix(80))...")
                 }
@@ -515,9 +538,17 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
         // they're likely done — add them to the running completed list
         extractCompletedItems(from: freshContext)
 
-        let dialogHint = AppSettings.shared.theaterMode
-            ? " (predictions + dialog). Dialog: exactly \(tempo.dialogTurns) lines about the SPECIFIC thing in the latest messages below. Name the file/function/feature."
-            : ""
+        let dialogHint: String
+        if AppSettings.shared.theaterMode {
+            dialogHint = """
+             (predictions + dialog).
+            Dialog: \(dialogTheme.char1) and \(dialogTheme.char2) (\(dialogTheme.show)) react to what JUST changed — like a commentary booth. \
+            Exactly \(tempo.dialogTurns) lines. Each line responds to the previous. They riff on the specific thing \(dialogTheme.boss) just did. \
+            Humor comes from the characters' worldview hitting the code, NOT from explaining what code does. Stay in character. Under 120 chars each.
+            """
+        } else {
+            dialogHint = ""
+        }
 
         // Carry forward previous predictions so model can course-correct
         var prevPredictions = ""
@@ -558,8 +589,88 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
             let result = try await callClaudeCLI(prompt: followUp, model: "haiku", sessionId: sessionId, resume: true)
             parsePrePromptResult(result)
             DebugLog.log("[PrePrompt] Refresh completed successfully")
+
+            // Schedule a second "reaction" dialog after Claude's response settles
+            scheduleReactionDialog()
         } catch {
             DebugLog.log("[PrePrompt] Refresh failed: \(error)")
+        }
+    }
+
+    /// Fire a second call after Claude Code's response settles.
+    /// Full round: board update + predictions + dialog — but focused on Claude's OUTPUT.
+    /// The first call reacted to what the user asked. This one reacts to what Claude did about it.
+    /// Identifies the delta between request and result, updates the board, and adjusts predictions.
+    private func scheduleReactionDialog() {
+        guard let sessionId = haikuSessionId, haikuSessionPrimed else { return }
+
+        // Cancel any pending reaction — new refresh supersedes
+        reactionTask?.cancel()
+
+        reactionTask = Task { @MainActor in
+            // Wait for Claude's response to finish streaming — adaptive delay based on tempo
+            let delay: UInt64 = switch estimateTempo() {
+            case .rapid:   8_000_000_000  // 8s — Claude is mid-stream, wait longer
+            case .active:  6_000_000_000  // 6s
+            case .relaxed: 5_000_000_000  // 5s
+            case .idle:    4_000_000_000  // 4s — session is quiet, respond quicker
+            }
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled else { return }
+
+            // Check that context actually changed since the first dialog
+            // (Claude wrote something new, not just the same state)
+            if let provider = sessionContextProvider {
+                let freshHash = provider().hashValue
+                guard freshHash != lastSessionContextHash else {
+                    DebugLog.log("[Theater] Reaction skipped — no new context since first dialog")
+                    return
+                }
+                lastSessionContextHash = freshHash
+            }
+
+            let tempo = estimateTempo()
+            let theaterOn = AppSettings.shared.theaterMode
+
+            let dialogBlock: String
+            if theaterOn {
+                dialogBlock = """
+                Dialog: \(dialogTheme.char1) and \(dialogTheme.char2) react to what Claude just BUILT or SAID — the actual output. \
+                This is the reaction shot. Did Claude nail it? Miss something? Overcomplicate it? Go on a tangent? \
+                The characters judge the RESULT, not the request. \
+                \(tempo.dialogTurns) lines, each builds on the previous, in character, under 120 chars each.
+                """
+            } else {
+                dialogBlock = ""
+            }
+
+            let formatExample = theaterOn
+                ? "{\"predictions\":[\"<p1>\",\"<p2>\"],\"dialog\":[{\"char\":\"\(dialogTheme.char1)\",\"line\":\"...\"},{\"char\":\"\(dialogTheme.char2)\",\"line\":\"...\"},...]}"
+                : "{\"predictions\":[\"<p1>\",\"<p2>\"]}"
+
+            let reactionPrompt = """
+            REACTION ROUND — Claude Code just responded. Re-read the last ~50 lines of the JSONL to see what Claude actually did.
+            Compare what \(dialogTheme.boss) asked for vs what Claude delivered:
+            - Did Claude do exactly what was asked, or did it add/miss things?
+            - What's still broken or incomplete after this response?
+            - What should \(dialogTheme.boss) ask for NEXT based on what Claude just produced?
+            Update the board: move newly completed items to Done, add new Todos if Claude's response revealed gaps.
+            REMINDER: Predictions = one casual sentence, plain English, no jargon or file/function names.
+            \(dialogBlock)
+            Reply with ONLY the JSON object: \(formatExample)
+            """
+
+            isGeneratingPrompt = true
+            defer { isGeneratingPrompt = false }
+
+            do {
+                let result = try await callClaudeCLI(prompt: reactionPrompt, model: "haiku", sessionId: sessionId, resume: true)
+                guard !Task.isCancelled else { return }
+                parsePrePromptResult(result)
+                DebugLog.log("[Theater] Reaction round completed")
+            } catch {
+                DebugLog.log("[Theater] Reaction round failed: \(error)")
+            }
         }
     }
 
@@ -588,6 +699,8 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
         debounceTask = nil
         refreshTask?.cancel()
         refreshTask = nil
+        reactionTask?.cancel()
+        reactionTask = nil
         jsonlWatchSource?.cancel()
         jsonlWatchSource = nil
     }
@@ -599,6 +712,8 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
         haikuSessionId = nil
         haikuSessionPrimed = false
         completedItems = []
+        reactionTask?.cancel()
+        reactionTask = nil
     }
 
     /// Generate contextual prompt suggestions based on project + session + active app.
@@ -705,11 +820,27 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
                     if theaterOn {
                         let initialTurns = estimateTempo().dialogTurns
                     dialogInstructions = """
-                        2. Write a \(initialTurns)-line dialog between \(dialogTheme.char1) and \(dialogTheme.char2) (\(dialogTheme.show)) about what's happening in the session.
-                           - FLOWING conversation: each line responds to the previous. ELI5 — explain technical terms via show-universe analogies.
-                           - Reference the user as "\(dialogTheme.boss)".
-                           - Dialog must be about the LATEST session activity. Name the specific file/function/feature.
-                           - Exactly \(initialTurns) lines. Each under 120 chars.
+                        2. WRITE DIALOG — \(initialTurns) lines between \(dialogTheme.char1) and \(dialogTheme.char2) from \(dialogTheme.show).
+
+                           THE SCENE: \(dialogTheme.char1) and \(dialogTheme.char2) are watching \(dialogTheme.boss) (the user) code in real time. They react to what just happened — like a sports commentary booth, but in character.
+
+                           WHAT MAKES IT GOOD:
+                           - They REACT to what just happened ("Wait, did \(dialogTheme.boss) just..."), not lecture about it
+                           - One character notices something, the other riffs on it — it's a CONVERSATION not a tutorial
+                           - Use the actual thing that changed (the feature, the bug, the file) as the prop — but filter it through how THESE characters would talk about it
+                           - The humor comes from the character's worldview colliding with the code, not from explaining what code does
+                           - Each line MUST respond to or build on the previous line. Never two disconnected observations.
+                           - Keep it tight: \(initialTurns) lines, each under 120 chars. Every word earns its place.
+
+                           BAD (tutorial/lecture — nobody shares this):
+                             \(dialogTheme.char1): "An API is like a waiter that takes your order."
+                             \(dialogTheme.char2): "And the database stores the orders."
+
+                           GOOD (characters reacting — this goes viral):
+                             \(dialogTheme.char1): "\(dialogTheme.boss) just rewrote the entire toast system. Again."
+                             \(dialogTheme.char2): "Third time this week. At this point the toast has more versions than my wardrobe."
+
+                           Refer to the user as \(dialogTheme.boss). Never break character.
                         """
                     } else {
                         dialogInstructions = "2. Skip dialog — omit the \"dialog\" field entirely."
@@ -730,11 +861,13 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
 
                     === EVERY ROUND, YOU DO THREE THINGS ===
 
-                    1. UPDATE THE BOARD — read board.md, then rewrite it:
-                       - Move completed items (things done in the session) to ## Done
+                    1. UPDATE THE BOARD — read board.md, then update it:
+                       - PRESERVE existing items EXACTLY as written — never rewrite, rephrase, summarize, or truncate them
+                       - Move completed items (things done in the session) to ## Done — copy the EXACT text, don't change it
                        - Move the current focus to ## In Progress
                        - Add new tasks to ## Todo that you think should happen next (from product perspective)
-                       - Keep items concise (one line each). Cap at 8 todo, 3 in-progress, 15 done.
+                       - New items you add: keep them concise (one line each). But NEVER edit items the user or a previous round added.
+                       - Cap at 8 todo, 3 in-progress, 15 done.
                        - Write the updated board back to the board.md file.
 
                     2. RETURN TWO RECOMMENDATIONS — what should be done next to make this product better
@@ -785,7 +918,7 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
                     THEN: Reply with ONLY a JSON object. No markdown, no explanation.
                     Format: \(formatExample)
                     Predictions: exactly 2, under 100 chars each.
-                    \(theaterOn ? "Dialog: reference the specific thing from the latest session activity. Stay in character. Each line under 120 chars." : "")
+                    \(theaterOn ? "Dialog: characters REACT to what just happened (not explain it). Each line builds on the previous. Think commentary booth, not tutorial. Stay in character. Under 120 chars each." : "")
                     """
 
                     DebugLog.log("[PrePrompt] Priming Haiku session \(sessionId)...")
@@ -1011,67 +1144,112 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
 
         let prompt: String
         if isCodeContext && !contextBlock.isEmpty {
-            // Agentic enhance: translate natural speech into an effective prompt for Claude
+            // Agentic enhance: has tools, can read the actual code before rewriting
             prompt = """
-            You are an invisible layer between a developer speaking naturally and Claude Code receiving their instruction.
-            Your job: turn casual speech into the clearest possible prompt — so the developer never has to think about "how to prompt."
-            Destination app: \(app). Context: \(appContext).
+            You sit between a developer speaking naturally and Claude Code receiving their instruction.
+            Your job: rewrite their prompt so that when Claude Code implements it, there is NO second round. One shot, done right.
+
+            You have tools: Read, Glob, Grep. USE THEM. Before you write the enhanced prompt:
+            1. Glob/Grep to find the files the developer is probably talking about.
+            2. Read the relevant sections — understand what's already there, what patterns the codebase uses, what the current state is.
+            3. Then write a prompt that references real file names, real function names, real patterns from the code.
 
             THE DEVELOPER SAID (raw dictation):
             ---
             \(text)
             ---
 
-            PROJECT CONTEXT:
+            PROJECT CONTEXT (summary — use tools for details):
             \(contextBlock)
 
-            TRANSFORM RULES:
-            - Keep it SHORT. The enhanced version should be roughly the same length as what they said.
-            - PRESERVE their words and references. If they say "these numbers" or "that thing", keep it — Claude Code has the conversation context and knows what they mean. You do NOT.
-            - NEVER expand vague references into lists or specifics you pulled from project context. The user is talking to Claude mid-conversation — Claude already knows what "these", "that", "it" refers to.
-            - NEVER add details, constraints, acceptance criteria, or steps they didn't say
-            - Clean up grammar, remove filler words and false starts
-            - Structure multi-step requests into clear steps IF they actually said multiple things
-            - Do NOT add meta-commentary — output is the prompt itself
+            HOW TO ENHANCE:
+            - Clean up the speech: remove filler words, false starts, fix grammar.
+            - Use what you found in the code to make the prompt specific and complete:
+              → Reference actual file paths, function names, types, patterns you saw.
+              → If the feature has states the developer didn't mention (empty, loading, error), describe what each should look like — don't just name them.
+              → If it could fail, describe the recovery behavior. Not "handle errors" — "if the request fails, show an inline error with retry and keep previous content visible."
+              → If it interacts with other parts of the codebase you saw, say how they should connect.
+              → If there's a timing issue or race condition given what you see in the code, describe the correct sequence.
+            - Think about what the FINISHED thing looks like, not just the happy path. Write the prompt that builds the finished thing.
 
-            Return ONLY the enhanced prompt, nothing else. No quotes, no explanation.
+            EXAMPLE:
+            Developer says: "add a delete button to the workflow cards"
+            BAD enhance: "Add a delete button to workflow cards. Handle edge cases: confirmation, empty state, errors, permissions."
+            GOOD enhance: "Add a delete button to the workflow cards in WorkflowDetailView.swift. Tapping it shows a confirmation dialog with the workflow name. On confirm, call WorkflowStore.delete() and animate the card out with .transition(.move(edge: .trailing)). If the delete fails, dismiss the dialog and show a toast error — don't remove the card. Disable the button with 0.5 opacity while a delete is in progress to prevent double-taps."
+
+            HARD RULES:
+            - Their references ("these", "that thing", "it") stay as-is — Claude Code has the conversation.
+            - You're completing their thought, not changing their intent.
+            - Every sentence you add should describe a SOLUTION, never just name a problem.
+            - Write it as one natural prompt paragraph (or a few short ones). No headers, no numbered lists unless they spoke in steps, no jargon.
+            - Be concise but specific. Real file names, real function names, real solutions.
+            - Your FINAL output must be ONLY the enhanced prompt text. Nothing else.
+
+            Return ONLY the enhanced prompt.
             """
         } else if isCodeContext && contextBlock.isEmpty {
-            // Code context but no project info — still give a code-aware prompt, just without project specifics
+            // Code context, no project summary but still has tools if running from project dir
             prompt = """
-            You are an invisible layer between a developer speaking naturally and a coding tool receiving their instruction.
-            Turn their casual speech into a clear, actionable prompt. Destination: \(app).
+            You sit between a developer speaking naturally and a coding tool receiving their instruction.
+            Rewrite their prompt so it gets implemented correctly the first time.
+
+            You have tools: Read, Glob, Grep. If you're in a project directory, USE THEM to understand what the developer is talking about before rewriting. Find the actual files, read the relevant code, then write a prompt that references real names and patterns.
 
             THE DEVELOPER SAID (raw dictation):
             ---
             \(text)
             ---
 
-            TRANSFORM RULES:
-            - Identify their INTENT — what do they want built/fixed/changed?
-            - Structure for the coding tool: if multiple steps, break them out clearly
-            - Add implicit constraints: "don't break existing behavior", "keep the same interface"
-            - Remove filler words, false starts, verbal tics
-            - PRESERVE their intent exactly — add clarity, NEVER change what they want
-            - Do NOT add meta-commentary — output is the prompt itself
+            HOW TO ENHANCE:
+            - Clean up the speech: remove filler, fix grammar, make the intent crystal clear.
+            - If you found relevant code with tools, reference real file paths and function names.
+            - Make the prompt COMPLETE by describing what the finished thing looks like:
+              → States the developer didn't mention (empty, loading, error) — describe what each should look like.
+              → Failure recovery — describe it, don't just name it.
+              → Interactions with existing code — be explicit about preserving current behavior.
+            - Every sentence you add describes a SOLUTION, never just names a problem.
 
-            Return ONLY the enhanced prompt, nothing else. No quotes, no explanation.
+            HARD RULES:
+            - Preserve their intent. Complete their thought, don't change it.
+            - Write as one natural prompt. No jargon, no headers, no checklists.
+            - Your FINAL output must be ONLY the enhanced prompt text.
+
+            Return ONLY the enhanced prompt.
             """
         } else {
-            // Non-code app (Gmail, Slack, Notion, etc.) — clean rewrite with tone awareness, NO project context
+            // Non-code app (Gmail, Slack, Notion, etc.) — real writing assistance, NOT just tone flipping
             prompt = """
-            Rewrite this dictated text for \(app). Keep the speaker's voice and intent. \
-            Make it sharper and clearer. If it's already clean, return it mostly as-is. \
-            Remove filler words and false starts. \
-            Tone: \(appContext). \
-            Return ONLY the improved text, nothing else.
+            You are an invisible writing layer. The user dictated text for \(app).
+            Your job: make their message land better — not just cleaner, but more effective.
+            Tone target: \(appContext).
 
-            "\(text)"
+            THE USER SAID (raw dictation):
+            ---
+            \(text)
+            ---
+
+            ENHANCE STRATEGY:
+            1. CLEAN: Remove filler words, false starts, "um", "like", repeated phrases. Fix grammar.
+            2. STRENGTHEN WEAK LANGUAGE: Replace hedging ("I think maybe we could") with confident language ("Let's" / "We should"). Remove unnecessary qualifiers unless the user is genuinely expressing uncertainty.
+            3. REMOVE AMBIGUITY: If a sentence could be misread, rewrite it so there's only one interpretation. Especially important for email and Slack where tone is lost.
+            4. TIGHTEN: Cut words that don't add meaning. "I wanted to reach out and let you know that" → just state the thing.
+            5. STRUCTURE: If the message has multiple points, separate them clearly. For email, ensure there's a clear ask or next step at the end if one is implied.
+            6. PRESERVE VOICE: Keep their personality, humor, and style. Don't make casual people sound corporate or vice versa.
+
+            HARD RULES:
+            - Keep roughly the same length (shorter is fine, much longer is not)
+            - If the original is already clean and clear, return it with minimal changes
+            - Output IS the message. No meta-commentary, no quotes, no "Here's the improved version".
+
+            Return ONLY the improved text.
             """
         }
 
+        // For code contexts, run from project dir so tools can read actual files
+        let projectDir: String? = isCodeContext ? projectPath : nil
+
         do {
-            let result = try await callClaudeCLI(prompt: prompt, model: provider.modelFlag)
+            let result = try await callClaudeCLI(prompt: prompt, model: provider.modelFlag, workingDirectory: projectDir)
             var cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
             // Strip surrounding quotes — LLM sometimes wraps its response in them
             if cleaned.count >= 2 && cleaned.hasPrefix("\"") && cleaned.hasSuffix("\"") {
@@ -1084,12 +1262,12 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
                 && !cleaned.contains("Failed to authenticate")
                 && !cleaned.hasPrefix("{") {
                 enhancedText = cleaned
-                print("[Transcribe] Enhanced: \(cleaned.prefix(80))...")
+                DebugLog.log("[Transcribe] Enhanced: \(cleaned.prefix(120))...")
             } else if !cleaned.isEmpty {
-                print("[Transcribe] Enhancement returned error/garbage, discarding: \(cleaned.prefix(200))")
+                DebugLog.log("[Transcribe] Enhancement returned error/garbage, discarding: \(cleaned.prefix(200))")
             }
         } catch {
-            print("[Transcribe] Enhancement failed: \(error)")
+            DebugLog.log("[Transcribe] Enhancement failed: \(error)")
         }
 
         isEnhancing = false
@@ -1097,7 +1275,7 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
 
     // MARK: - Claude CLI
 
-    private func callClaudeCLI(prompt: String, model: String = "haiku", sessionId: String? = nil, resume: Bool = false) async throws -> String {
+    private func callClaudeCLI(prompt: String, model: String = "haiku", sessionId: String? = nil, resume: Bool = false, workingDirectory: String? = nil) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let home = FileManager.default.homeDirectoryForCurrentUser
@@ -1110,7 +1288,7 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
 
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: cliPath)
-                var args = ["--model", model, "-p", prompt, "--output-format", "text", "--dangerously-skip-permissions", "--allowedTools", "Read,Glob,Write"]
+                var args = ["--model", model, "-p", prompt, "--output-format", "text", "--dangerously-skip-permissions", "--allowedTools", "Read,Glob,Grep"]
                 if let sid = sessionId {
                     if resume {
                         args += ["--resume", sid]
@@ -1120,8 +1298,12 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
                 }
                 process.arguments = args
 
-                // Set CWD to a safe directory to prevent the CLI from scanning protected locations
-                process.currentDirectoryURL = home.appendingPathComponent(".claude")
+                // Set CWD: project dir for enhance (so tools can read files), safe dir otherwise
+                if let wd = workingDirectory, FileManager.default.fileExists(atPath: wd) {
+                    process.currentDirectoryURL = URL(fileURLWithPath: wd)
+                } else {
+                    process.currentDirectoryURL = home.appendingPathComponent(".claude")
+                }
 
                 let homePath = home.path
                 var env = ProcessInfo.processInfo.environment

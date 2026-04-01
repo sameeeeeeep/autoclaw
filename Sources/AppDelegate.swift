@@ -183,6 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         // Do NOT call endSession() here — it would kill the async work
                         s.isTranscribing = false
                         s.transcribeService.stop()
+                        s.transcribeService.dialogVoice.isMuted = false  // Unmute theater
                         DebugLog.log("[Fn] Transcribe stopping — letting async work finish")
                         return  // don't endSession yet, stop() handles everything
                     case .learn where s.isLearnRecording:

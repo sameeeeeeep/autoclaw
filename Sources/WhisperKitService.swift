@@ -200,14 +200,17 @@ final class WhisperKitService: ObservableObject {
             let startIdx = max(0, lastChunkEnd - overlapSamples)
             let chunk = Array(currentBuffer[startIdx..<bufferCount])
 
-            print("[WhisperKit] Background transcribing chunk (\(String(format: "%.1f", newSeconds))s)...")
+            DebugLog.log("[WhisperKit] Background transcribing chunk (\(String(format: "%.1f", newSeconds))s, samples \(lastChunkEnd)..\(bufferCount))...")
 
             if let text = await transcribeAudio(chunk) {
                 completedChunkTexts.append(text)
-                print("[WhisperKit] Chunk \(completedChunkTexts.count): \"\(text.prefix(60))...\"")
+                lastChunkEnd = bufferCount
+                DebugLog.log("[WhisperKit] Chunk \(completedChunkTexts.count): \"\(text.prefix(80))\"")
+            } else {
+                // DON'T advance lastChunkEnd — retry this audio region with the next chunk.
+                // This prevents silent drops when WhisperKit filters all segments (low confidence, hallucination, noise).
+                DebugLog.log("[WhisperKit] Chunk returned nil — keeping audio region for retry (samples \(lastChunkEnd)..\(bufferCount))")
             }
-
-            lastChunkEnd = bufferCount
         }
     }
 
@@ -225,7 +228,7 @@ final class WhisperKitService: ObservableObject {
         let chunk = Array(currentBuffer[startIdx..<bufferCount])
 
         let seconds = Float(newSamples) / Float(WhisperKit.sampleRate)
-        print("[WhisperKit] Transcribing remaining audio (\(String(format: "%.1f", seconds))s)...")
+        DebugLog.log("[WhisperKit] Transcribing remaining audio (\(String(format: "%.1f", seconds))s, samples \(lastChunkEnd)..\(bufferCount))...")
 
         return await transcribeAudio(chunk)
     }
@@ -260,12 +263,12 @@ final class WhisperKitService: ObservableObject {
                 let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { return nil }
                 guard !isHallucination(text) else {
-                    print("[WhisperKit] Filtered: '\(text)'")
+                    DebugLog.log("[WhisperKit] Filtered hallucination: '\(text)'")
                     return nil
                 }
                 // Low confidence filter (very lenient — let cleanup handle the rest)
                 guard segment.avgLogprob > -2.5 else {
-                    print("[WhisperKit] Low confidence: '\(text)' (logprob: \(segment.avgLogprob))")
+                    DebugLog.log("[WhisperKit] Low confidence dropped: '\(text)' (logprob: \(String(format: "%.2f", segment.avgLogprob)))")
                     return nil
                 }
                 return text
