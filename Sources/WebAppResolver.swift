@@ -133,7 +133,15 @@ struct WebAppResolver {
         ("google.com", resolveGoogle),
         ("perplexity.ai", { _, _, _ in ResolvedApp(appName: "Perplexity", category: .search, section: nil, detail: nil) }),
         ("bing.com", { _, _, _ in ResolvedApp(appName: "Bing", category: .search, section: nil, detail: nil) }),
-        ("claude.ai", { _, _, _ in ResolvedApp(appName: "Claude", category: .search, section: nil, detail: nil) }),
+        ("claude.ai", { _, p, _ in
+            if p.contains("/code") {
+                return ResolvedApp(appName: "Claude Code", category: .development, section: "Code", detail: nil)
+            } else if p.contains("/cowork") {
+                return ResolvedApp(appName: "Claude Cowork", category: .development, section: "Cowork", detail: nil)
+            } else {
+                return ResolvedApp(appName: "Claude", category: .search, section: nil, detail: nil)
+            }
+        }),
         ("chatgpt.com", { _, _, _ in ResolvedApp(appName: "ChatGPT", category: .search, section: nil, detail: nil) }),
         ("chat.openai.com", { _, _, _ in ResolvedApp(appName: "ChatGPT", category: .search, section: nil, detail: nil) }),
 

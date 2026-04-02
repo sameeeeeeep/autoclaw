@@ -105,6 +105,8 @@ final class AppState: ObservableObject {
         if next == .transcribe && sessionActive {
             autoDetectProjectIfNeeded()
             transcribeService.activeApp = activeApp
+            transcribeService.activeWindowTitle = activeWindowTitle
+            transcribeService.activeBrowserURL = activeWindowService.browserURL
             transcribeService.projectContext = selectedProject?.claudeMDSummary ?? ""
             transcribeService.sessionContext = buildSessionContext()
             transcribeService.generatePrePrompt()
@@ -262,6 +264,8 @@ final class AppState: ObservableObject {
             showThread = true
             transcribeService.dialogVoice.isMuted = true   // Mute theater while mic is on
             transcribeService.activeApp = activeApp
+            transcribeService.activeWindowTitle = activeWindowTitle
+            transcribeService.activeBrowserURL = activeWindowService.browserURL
             // Capture the target app for cursor injection — the app user was in before toast
             CursorInjector.targetApp = NSWorkspace.shared.runningApplications.first {
                 $0.isActive && $0.bundleIdentifier != Bundle.main.bundleIdentifier
@@ -414,6 +418,7 @@ final class AppState: ObservableObject {
         }
         DebugLog.log("[PrePrompt] firePrePromptIfNeeded — project: \(selectedProject?.name ?? "nil"), jsonl: \(selectedClaudeSession.map { String($0.filePath.suffix(40)) } ?? "nil")")
         transcribeService.generatePrePrompt()
+        // Prime enhance session in background so enhance calls are fast
         // Watch the active JSONL file for changes — event-driven, not polled
         transcribeService.startAutoRefresh(watchingFile: selectedClaudeSession?.filePath)
     }
@@ -435,7 +440,7 @@ final class AppState: ObservableObject {
         transcribeService.sessionContextProvider = { [weak self] in
             self?.buildSessionContext() ?? ""
         }
-        transcribeService.resetHaikuSession()  // New project = new Haiku session
+        transcribeService.resetHaikuSession()  // New project = new Haiku + enhance session
         DebugLog.log("[PrePrompt] switchToProject(\(project.name)) — path: \(project.path), context: \(transcribeService.projectContext.count) chars, session: \(transcribeService.sessionContext.count) chars, autoSession: \(selectedClaudeSession?.title.prefix(30) ?? "none")")
         transcribeService.generatePrePrompt()
         // Watch the NEW project's JSONL — stops watching old one
@@ -1019,6 +1024,8 @@ final class AppState: ObservableObject {
         if requestMode == .transcribe {
             autoDetectProjectIfNeeded()
             transcribeService.activeApp = activeApp
+            transcribeService.activeWindowTitle = activeWindowTitle
+            transcribeService.activeBrowserURL = activeWindowService.browserURL
             transcribeService.projectContext = selectedProject?.claudeMDSummary ?? ""
             transcribeService.sessionContext = buildSessionContext()
             DebugLog.log("[Session] Firing pre-prompt — projectCtx: \(transcribeService.projectContext.count), sessionCtx: \(transcribeService.sessionContext.count)")

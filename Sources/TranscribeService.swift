@@ -33,6 +33,10 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
 
     /// The app user was in when they started transcribing
     var activeApp: String = ""
+    /// Window title of the active app — used for product detection
+    var activeWindowTitle: String = ""
+    /// Browser URL if in a browser — used for web app detection
+    var activeBrowserURL: String = ""
     /// Project context (CLAUDE.md summary) — set by AppState before start
     var projectContext: String = ""
     /// Session context (recent thread messages) — set by AppState before start
@@ -315,7 +319,7 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
             let feedDialogHint: String
             if AppSettings.shared.theaterMode {
                 let turns = estimateTempo().dialogTurns
-                feedDialogHint = "\nDialog: \(dialogTheme.char1) and \(dialogTheme.char2) react to what \(dialogTheme.boss) just said/did — commentary booth style, \(turns) lines, in character, each line builds on the previous."
+                feedDialogHint = "\nDialog: \(dialogTheme.char1) and \(dialogTheme.char2) react to EXACTLY what \(dialogTheme.boss) just dictated above — the specific words, the intent, the ambition or absurdity of it. Commentary booth style, \(turns) lines, in character, each line builds on the previous. Under 120 chars each."
             } else {
                 feedDialogHint = ""
             }
@@ -542,8 +546,9 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
         if AppSettings.shared.theaterMode {
             dialogHint = """
              (predictions + dialog).
-            Dialog: \(dialogTheme.char1) and \(dialogTheme.char2) (\(dialogTheme.show)) react to what JUST changed — like a commentary booth. \
-            Exactly \(tempo.dialogTurns) lines. Each line responds to the previous. They riff on the specific thing \(dialogTheme.boss) just did. \
+            Dialog: \(dialogTheme.char1) and \(dialogTheme.char2) (\(dialogTheme.show)) react to the SPECIFIC thing that just changed in the JSONL — name it. \
+            Not "nice work" or "interesting choice" — reference the actual feature, bug, file, or decision. Commentary booth style. \
+            Exactly \(tempo.dialogTurns) lines. Each line responds to the previous. \
             Humor comes from the characters' worldview hitting the code, NOT from explaining what code does. Stay in character. Under 120 chars each.
             """
         } else {
@@ -722,6 +727,12 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
     func generatePrePrompt() {
         // Sync theme from settings
         dialogTheme = DialogTheme.find(AppSettings.shared.dialogThemeId)
+
+        // Skip if suggestions are disabled
+        guard AppSettings.shared.suggestionsEnabled else {
+            DebugLog.log("[PrePrompt] SKIP — suggestions disabled")
+            return
+        }
 
         // Need context to generate a suggestion — either file paths or inline text
         guard projectPath != nil || sessionJSONLPath != nil || !projectContext.isEmpty || !sessionContext.isEmpty else {
@@ -919,6 +930,21 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
                     Format: \(formatExample)
                     Predictions: exactly 2, under 100 chars each.
                     \(theaterOn ? "Dialog: characters REACT to what just happened (not explain it). Each line builds on the previous. Think commentary booth, not tutorial. Stay in character. Under 120 chars each." : "")
+
+                    === ENHANCE MODE ===
+
+                    Sometimes you'll receive an ENHANCE request instead of a prediction request.
+                    These start with "ENHANCE" and include APP, CONTEXT, and TEXT fields.
+
+                    When you see ENHANCE:
+                    - Do NOT return JSON. Do NOT update the board. Do NOT return predictions.
+                    - Return ONLY the enhanced text — nothing else.
+
+                    Adapt based on CONTEXT:
+                    - "writing": Clean up prose for humans. Fix grammar, remove filler, tighten language, preserve voice and personality. Output IS the message they'll send.
+                    - "ai-prompt": Shape it as an effective prompt for a chat AI. Sharpen the ask, keep the same scope, don't over-engineer.
+                    - "dev-context": Clear, specific text for dev tools (issues, PRs). Use project context you already know for proper names.
+                    - "code-tools": Full agentic enhance. Use your project knowledge to reference real file names, real function names, real patterns. Write a one-shot implementation prompt. Think: "if someone implemented exactly what this says, what would go wrong?" then bake the fix INTO the prompt.
                     """
 
                     DebugLog.log("[PrePrompt] Priming Haiku session \(sessionId)...")
@@ -932,7 +958,11 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
 
                 } else if let sessionId = haikuSessionId {
                     // Follow-up: just ask for next prediction (context already loaded)
-                    let followUp = "Active app: \(activeApp).\nReply with ONLY the JSON object (predictions + dialog), nothing else."
+                    let theaterOn = AppSettings.shared.theaterMode
+                    let dialogHint = theaterOn
+                        ? "\nDialog: Re-read the JSONL to see what \(dialogTheme.boss) is doing right now. \(dialogTheme.char1) and \(dialogTheme.char2) react to the SPECIFIC thing happening — the feature, the bug, the decision. Commentary booth, \(estimateTempo().dialogTurns) lines, in character, each builds on the previous. Under 120 chars each."
+                        : ""
+                    let followUp = "Active app: \(activeApp). Re-read the last ~50 lines of the JSONL to see current activity.\(dialogHint)\nReply with ONLY the JSON object (predictions\(theaterOn ? " + dialog" : "")), nothing else."
 
                     DebugLog.log("[PrePrompt] Resuming Haiku session \(sessionId)...")
                     let result = try await callClaudeCLI(prompt: followUp, model: "haiku", sessionId: sessionId, resume: true)
@@ -1092,6 +1122,80 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
 
     // MARK: - Smart Enhancement
 
+    /// Determines what kind of enhance the user needs based on what app/product they're in.
+    enum EnhanceContext {
+        /// Writing text for humans (email, Slack, Notion, social media, docs)
+        case writing(tone: String)
+        /// Crafting a prompt for a conversational AI (claude.ai chat, ChatGPT, Cowork)
+        case aiPrompt(product: String)
+        /// Coding tool that benefits from project context but no codebase tools (GitHub, Linear, Jira)
+        case devContext
+        /// Full agentic enhance with codebase tools (Claude Code CLI, terminal, Cursor, Xcode)
+        case codeTools
+    }
+
+    /// Detect what kind of enhance context the user is in
+    private func detectEnhanceContext(app: String) -> EnhanceContext {
+        let a = app.lowercased()
+        let title = activeWindowTitle.lowercased()
+        let url = activeBrowserURL.lowercased()
+
+        // 1. Conversational AI products — user is writing a prompt, not code or prose
+        if a == "claude cowork" || url.contains("claude.ai/cowork") {
+            return .aiPrompt(product: "Claude Cowork")
+        }
+        if (a == "claude" && !url.contains("/code")) || url.contains("claude.ai") && !url.contains("/code") {
+            return .aiPrompt(product: "Claude")
+        }
+        if a.contains("chatgpt") || url.contains("chatgpt.com") || url.contains("chat.openai.com") {
+            return .aiPrompt(product: "ChatGPT")
+        }
+        if a.contains("perplexity") || url.contains("perplexity.ai") {
+            return .aiPrompt(product: "Perplexity")
+        }
+        if a.contains("gemini") || url.contains("gemini.google.com") {
+            return .aiPrompt(product: "Gemini")
+        }
+
+        // 2. Code tools — full agentic enhance with file reading
+        if a == "claude code" || url.contains("claude.ai/code") {
+            return .codeTools
+        }
+        let codeApps = ["terminal", "xcode", "warp", "iterm", "alacritty", "kitty", "hyper", "cursor", "windsurf"]
+        if codeApps.contains(where: { a.contains($0) }) {
+            return .codeTools
+        }
+        // VS Code — "Code" is the app name, but distinguish from Claude Code web
+        if a == "code" || (a.contains("code") && !a.contains("claude")) {
+            return .codeTools
+        }
+        // Terminal-like window titles (contains path-like strings)
+        if title.contains("~") || title.contains("/users/") || title.contains("/home/") {
+            return .codeTools
+        }
+
+        // 3. Dev context — benefits from project awareness but no codebase tools
+        if a.contains("github") || a.contains("linear") || a.contains("jira") || a.contains("gitlab") {
+            return .devContext
+        }
+
+        // 4. Writing — everything else is prose for humans
+        let tone: String
+        switch a {
+        case let x where x.contains("gmail") || x.contains("mail") || x.contains("outlook"):
+            tone = "email — professional and clear"
+        case let x where x.contains("slack") || x.contains("discord") || x.contains("teams") || x.contains("messages"):
+            tone = "messaging — casual but clear"
+        case let x where x.contains("notion") || x.contains("docs") || x.contains("word") || x.contains("coda"):
+            tone = "document — polished and flowing"
+        case let x where x.contains("twitter") || x.contains("x.com") || x.contains("linkedin"):
+            tone = "social media — punchy and engaging"
+        default:
+            tone = "general — clear and effective"
+        }
+        return .writing(tone: tone)
+    }
+
     private func enhanceWithModel(text: String, app: String) async {
         let provider = AppSettings.shared.enhanceProvider
         guard provider != .none else { return }
@@ -1099,52 +1203,106 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
         isEnhancing = true
         enhancedText = ""
 
-        let appContext: String
-        switch app.lowercased() {
-        case let a where a.contains("gmail") || a.contains("mail") || a.contains("outlook"):
-            appContext = "email — professional and clear"
-        case let a where a.contains("slack") || a.contains("discord") || a.contains("teams") || a.contains("messages"):
-            appContext = "messaging — casual but clear"
-        case let a where a.contains("notion") || a.contains("docs") || a.contains("word") || a.contains("coda") || a.contains("google docs"):
-            appContext = "document — polished and flowing"
-        case let a where a.contains("twitter") || a.contains("x.com") || a.contains("linkedin") || a.contains("x/"):
-            appContext = "social media — punchy and engaging"
-        case let a where a.contains("terminal") || a.contains("xcode") || a.contains("code"):
-            appContext = "code/terminal — technical and precise"
-        default:
-            appContext = "general — clear and effective"
+        let context = detectEnhanceContext(app: app)
+
+        // ─── PRIMARY: Haiku session already primed → one resume turn (fast for ALL contexts) ───
+        if haikuSessionPrimed, let sessionId = haikuSessionId {
+            let contextLabel: String
+            switch context {
+            case .writing(let tone): contextLabel = "writing (\(tone))"
+            case .aiPrompt(let product): contextLabel = "ai-prompt (\(product))"
+            case .devContext: contextLabel = "dev-context"
+            case .codeTools: contextLabel = "code-tools"
+            }
+
+            let useTools: Bool
+            if case .codeTools = context { useTools = true } else { useTools = false }
+
+            let enhanceFollowUp = """
+            ENHANCE (not a prediction request — return ONLY enhanced text, no JSON):
+            APP: \(app)
+            CONTEXT: \(contextLabel)
+            TEXT: \(text)
+            """
+
+            do {
+                let result = try await callClaudeCLI(
+                    prompt: enhanceFollowUp,
+                    model: "haiku", sessionId: sessionId, resume: true,
+                    workingDirectory: projectPath, allowTools: useTools
+                )
+                if let cleaned = processEnhanceResult(result, originalText: text) {
+                    enhancedText = cleaned
+                }
+            } catch {
+                DebugLog.log("[Enhance] Haiku resume failed: \(error), falling back")
+                // Don't reset haikuSession — it may still work for predictions
+            }
+
+            if !enhancedText.isEmpty {
+                isEnhancing = false
+                return
+            }
         }
 
-        // Determine if this is a code/dev context FIRST — controls whether project context is relevant
-        let appLower = app.lowercased()
-        let isCodeContext = appLower.contains("terminal")
-            || appLower.contains("claude")
-            || appLower.contains("xcode")
-            || appLower.contains("code")   // VS Code, Cursor ("Cursor" contains "cursor"), Claude Code
-            || appLower.contains("warp")
-            || appLower.contains("iterm")
-            || appLower.contains("cursor")
-            || appLower.contains("alacritty")
-            || appLower.contains("kitty")
-            || appLower.contains("hyper")
-            || appLower.contains("github")  // GitHub in browser (resolved by WebAppResolver)
-            || appLower.contains("linear")  // Project management tools benefit from project context
-            || appLower.contains("jira")
+        // ─── FALLBACK: no primed session yet ───
+        // For writing/aiPrompt: Qwen locally (instant, no cloud dependency)
+        // For code/dev: cold CLI call with full prompt
+        switch context {
+        case .writing(let tone):
+            do {
+                let result = try await ollamaService.generate(
+                    prompt: "Rewrite this dictated text for \(app). Tone: \(tone). Remove filler, fix grammar, tighten, preserve voice. Output ONLY the improved text.\n\n\(text)",
+                    system: "You clean up dictated speech. Output only the final text."
+                )
+                if let cleaned = processEnhanceResult(result, originalText: text) {
+                    enhancedText = cleaned
+                    isEnhancing = false
+                    return
+                }
+            } catch {
+                DebugLog.log("[Enhance] Qwen fallback failed: \(error)")
+            }
+        case .aiPrompt(let product):
+            do {
+                let result = try await ollamaService.generate(
+                    prompt: "Turn this dictated speech into a clear prompt for \(product). Clean up filler, sharpen the ask. Output ONLY the prompt.\n\n\(text)",
+                    system: "You clean up dictated speech into AI prompts. Output only the final prompt."
+                )
+                if let cleaned = processEnhanceResult(result, originalText: text) {
+                    enhancedText = cleaned
+                    isEnhancing = false
+                    return
+                }
+            } catch {
+                DebugLog.log("[Enhance] Qwen fallback failed: \(error)")
+            }
+        default:
+            break
+        }
 
-        // Only inject project/session context for code/dev apps — Gmail doesn't need your CLAUDE.md
+        // Code/dev cold start — or Qwen failed above
         var contextBlock = ""
-        if isCodeContext {
+        switch context {
+        case .codeTools, .devContext:
             if !projectContext.isEmpty {
                 contextBlock += "\nProject context:\n\(projectContext)\n"
             }
             if !sessionContext.isEmpty {
                 contextBlock += "\nRecent session activity:\n\(sessionContext)\n"
             }
+        case .writing, .aiPrompt:
+            break
         }
 
         let prompt: String
-        if isCodeContext && !contextBlock.isEmpty {
-            // Agentic enhance: has tools, can read the actual code before rewriting
+        let useTools: Bool
+        let projectDir: String?
+
+        switch context {
+        case .codeTools where !contextBlock.isEmpty:
+            useTools = true
+            projectDir = projectPath
             prompt = """
             You sit between a developer speaking naturally and Claude Code receiving their instruction.
             Your job: rewrite their prompt so that when Claude Code implements it, there is NO second round. One shot, done right.
@@ -1172,11 +1330,6 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
               → If there's a timing issue or race condition given what you see in the code, describe the correct sequence.
             - Think about what the FINISHED thing looks like, not just the happy path. Write the prompt that builds the finished thing.
 
-            EXAMPLE:
-            Developer says: "add a delete button to the workflow cards"
-            BAD enhance: "Add a delete button to workflow cards. Handle edge cases: confirmation, empty state, errors, permissions."
-            GOOD enhance: "Add a delete button to the workflow cards in WorkflowDetailView.swift. Tapping it shows a confirmation dialog with the workflow name. On confirm, call WorkflowStore.delete() and animate the card out with .transition(.move(edge: .trailing)). If the delete fails, dismiss the dialog and show a toast error — don't remove the card. Disable the button with 0.5 opacity while a delete is in progress to prevent double-taps."
-
             HARD RULES:
             - Their references ("these", "that thing", "it") stay as-is — Claude Code has the conversation.
             - You're completing their thought, not changing their intent.
@@ -1187,13 +1340,15 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
 
             Return ONLY the enhanced prompt.
             """
-        } else if isCodeContext && contextBlock.isEmpty {
-            // Code context, no project summary but still has tools if running from project dir
+
+        case .codeTools:
+            useTools = true
+            projectDir = projectPath
             prompt = """
             You sit between a developer speaking naturally and a coding tool receiving their instruction.
             Rewrite their prompt so it gets implemented correctly the first time.
 
-            You have tools: Read, Glob, Grep. If you're in a project directory, USE THEM to understand what the developer is talking about before rewriting. Find the actual files, read the relevant code, then write a prompt that references real names and patterns.
+            You have tools: Read, Glob, Grep. If you're in a project directory, USE THEM to understand what the developer is talking about before rewriting.
 
             THE DEVELOPER SAID (raw dictation):
             ---
@@ -1203,79 +1358,72 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
             HOW TO ENHANCE:
             - Clean up the speech: remove filler, fix grammar, make the intent crystal clear.
             - If you found relevant code with tools, reference real file paths and function names.
-            - Make the prompt COMPLETE by describing what the finished thing looks like:
-              → States the developer didn't mention (empty, loading, error) — describe what each should look like.
-              → Failure recovery — describe it, don't just name it.
-              → Interactions with existing code — be explicit about preserving current behavior.
             - Every sentence you add describes a SOLUTION, never just names a problem.
-
-            HARD RULES:
-            - Preserve their intent. Complete their thought, don't change it.
-            - Write as one natural prompt. No jargon, no headers, no checklists.
+            - Preserve their intent. Write as one natural prompt.
             - Your FINAL output must be ONLY the enhanced prompt text.
 
             Return ONLY the enhanced prompt.
             """
-        } else {
-            // Non-code app (Gmail, Slack, Notion, etc.) — real writing assistance, NOT just tone flipping
+
+        case .devContext:
+            useTools = false
+            projectDir = nil
             prompt = """
-            You are an invisible writing layer. The user dictated text for \(app).
-            Your job: make their message land better — not just cleaner, but more effective.
-            Tone target: \(appContext).
+            Rewrite this dictated text for \(app). Make it clear, specific, and actionable.\(contextBlock.isEmpty ? "" : "\n\nProject context:\n\(contextBlock)")
 
-            THE USER SAID (raw dictation):
-            ---
             \(text)
-            ---
 
-            ENHANCE STRATEGY:
-            1. CLEAN: Remove filler words, false starts, "um", "like", repeated phrases. Fix grammar.
-            2. STRENGTHEN WEAK LANGUAGE: Replace hedging ("I think maybe we could") with confident language ("Let's" / "We should"). Remove unnecessary qualifiers unless the user is genuinely expressing uncertainty.
-            3. REMOVE AMBIGUITY: If a sentence could be misread, rewrite it so there's only one interpretation. Especially important for email and Slack where tone is lost.
-            4. TIGHTEN: Cut words that don't add meaning. "I wanted to reach out and let you know that" → just state the thing.
-            5. STRUCTURE: If the message has multiple points, separate them clearly. For email, ensure there's a clear ask or next step at the end if one is implied.
-            6. PRESERVE VOICE: Keep their personality, humor, and style. Don't make casual people sound corporate or vice versa.
+            Clean up speech artifacts. Use proper names from context. Output ONLY the enhanced text.
+            """
 
-            HARD RULES:
-            - Keep roughly the same length (shorter is fine, much longer is not)
-            - If the original is already clean and clear, return it with minimal changes
-            - Output IS the message. No meta-commentary, no quotes, no "Here's the improved version".
+        case .writing, .aiPrompt:
+            // These should have been handled by Qwen above — only reach here if Qwen failed
+            useTools = false
+            projectDir = nil
+            prompt = """
+            Clean up this dictated text for \(app). Remove filler, fix grammar, preserve voice.
+            Output ONLY the improved text, nothing else.
 
-            Return ONLY the improved text.
+            \(text)
             """
         }
 
-        // For code contexts, run from project dir so tools can read actual files
-        let projectDir: String? = isCodeContext ? projectPath : nil
-
         do {
-            let result = try await callClaudeCLI(prompt: prompt, model: provider.modelFlag, workingDirectory: projectDir)
-            var cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
-            // Strip surrounding quotes — LLM sometimes wraps its response in them
-            if cleaned.count >= 2 && cleaned.hasPrefix("\"") && cleaned.hasSuffix("\"") {
-                cleaned = String(cleaned.dropFirst().dropLast())
-            }
-            // Guard against API errors leaking into the UI
-            if !cleaned.isEmpty && cleaned != text
-                && !cleaned.contains("\"type\":\"error\"")
-                && !cleaned.contains("authentication_error")
-                && !cleaned.contains("Failed to authenticate")
-                && !cleaned.hasPrefix("{") {
+            let result = try await callClaudeCLI(prompt: prompt, model: provider.modelFlag, workingDirectory: projectDir, allowTools: useTools)
+            if let cleaned = processEnhanceResult(result, originalText: text) {
                 enhancedText = cleaned
-                DebugLog.log("[Transcribe] Enhanced: \(cleaned.prefix(120))...")
-            } else if !cleaned.isEmpty {
-                DebugLog.log("[Transcribe] Enhancement returned error/garbage, discarding: \(cleaned.prefix(200))")
             }
         } catch {
-            DebugLog.log("[Transcribe] Enhancement failed: \(error)")
+            DebugLog.log("[Enhance] Enhancement failed: \(error)")
         }
 
         isEnhancing = false
     }
 
+    /// Process raw CLI output from enhance — strips quotes, guards against errors, returns nil on garbage
+    private func processEnhanceResult(_ result: String, originalText: String) -> String? {
+        var cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Strip surrounding quotes — LLM sometimes wraps its response in them
+        if cleaned.count >= 2 && cleaned.hasPrefix("\"") && cleaned.hasSuffix("\"") {
+            cleaned = String(cleaned.dropFirst().dropLast())
+        }
+        // Guard against API errors leaking into the UI
+        if !cleaned.isEmpty && cleaned != originalText
+            && !cleaned.contains("\"type\":\"error\"")
+            && !cleaned.contains("authentication_error")
+            && !cleaned.contains("Failed to authenticate")
+            && !cleaned.hasPrefix("{") {
+            DebugLog.log("[Enhance] Enhanced: \(cleaned.prefix(120))...")
+            return cleaned
+        } else if !cleaned.isEmpty {
+            DebugLog.log("[Enhance] Returned error/garbage, discarding: \(cleaned.prefix(200))")
+        }
+        return nil
+    }
+
     // MARK: - Claude CLI
 
-    private func callClaudeCLI(prompt: String, model: String = "haiku", sessionId: String? = nil, resume: Bool = false, workingDirectory: String? = nil) async throws -> String {
+    private func callClaudeCLI(prompt: String, model: String = "haiku", sessionId: String? = nil, resume: Bool = false, workingDirectory: String? = nil, allowTools: Bool = true) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let home = FileManager.default.homeDirectoryForCurrentUser
@@ -1288,7 +1436,10 @@ final class TranscribeService: ObservableObject, TheaterDataSource {
 
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: cliPath)
-                var args = ["--model", model, "-p", prompt, "--output-format", "text", "--dangerously-skip-permissions", "--allowedTools", "Read,Glob,Grep"]
+                var args = ["--model", model, "-p", prompt, "--output-format", "text", "--dangerously-skip-permissions"]
+                if allowTools {
+                    args += ["--allowedTools", "Read,Glob,Grep"]
+                }
                 if let sid = sessionId {
                     if resume {
                         args += ["--resume", sid]

@@ -51,6 +51,7 @@ final class AppSettings: @unchecked Sendable {
     private let micKey = "selected_microphone_uid"
     private let dialogThemeKey = "dialog_theme_id"
     private let theaterModeKey = "theater_mode_enabled"
+    private let suggestionsEnabledKey = "suggestions_enabled"
 
     var anthropicAPIKey: String {
         // 1. Environment variable
@@ -124,6 +125,19 @@ final class AppSettings: @unchecked Sendable {
         set {
             UserDefaults.standard.set(newValue, forKey: theaterModeKey)
             print("[Autoclaw] Theater mode -> \(newValue)")
+        }
+    }
+
+    /// Whether pre-prompt suggestions (predictions) are enabled
+    var suggestionsEnabled: Bool {
+        get {
+            // Default to true if never set
+            if UserDefaults.standard.object(forKey: suggestionsEnabledKey) == nil { return true }
+            return UserDefaults.standard.bool(forKey: suggestionsEnabledKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: suggestionsEnabledKey)
+            print("[Autoclaw] Suggestions -> \(newValue)")
         }
     }
 

@@ -48,7 +48,7 @@ struct UnifiedToastView: View {
         VStack(spacing: 0) {
             cardContent
         }
-        .frame(width: 340)
+        .frame(width: 420)
         .modifier(LiquidGlassBackground(fallbackColor: theme.card))
         .intelligenceGlow(
             color: toastGlowColor,
@@ -482,8 +482,38 @@ struct UnifiedToastView: View {
 
             Spacer()
 
-            // Theater + Board toggles — only in Transcribe mode
+            // Feature toggles — only in Transcribe mode
             if appState.requestMode == .transcribe {
+                Button(action: {
+                    AppSettings.shared.suggestionsEnabled.toggle()
+                    if !AppSettings.shared.suggestionsEnabled {
+                        appState.transcribeService.suggestedPrompts = []
+                    }
+                }) {
+                    Image(systemName: AppSettings.shared.suggestionsEnabled ? "lightbulb.max.fill" : "lightbulb.slash")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AppSettings.shared.suggestionsEnabled ? Theme.purple : theme.textMuted)
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help("Toggle suggestions")
+
+                Button(action: {
+                    let current = AppSettings.shared.enhanceProvider
+                    if current == .none {
+                        AppSettings.shared.enhanceProvider = .haiku
+                    } else {
+                        AppSettings.shared.enhanceProvider = .none
+                    }
+                }) {
+                    Image(systemName: AppSettings.shared.enhanceProvider != .none ? "wand.and.stars" : "wand.and.stars.inverse")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AppSettings.shared.enhanceProvider != .none ? Theme.purple : theme.textMuted)
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help("Toggle smart enhance")
+
                 Button(action: {
                     AppSettings.shared.theaterMode.toggle()
                     NotificationCenter.default.post(name: .theaterModeToggled, object: nil)
@@ -680,7 +710,7 @@ struct UnifiedToastView: View {
                     Text(prompt)
                         .font(.system(size: 12))
                         .foregroundStyle(theme.textPrimary)
-                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
